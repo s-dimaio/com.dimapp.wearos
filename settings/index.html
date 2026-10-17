@@ -1,0 +1,1126 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wear OS Settings</title>
+  <script type="text/javascript" src="/homey.js" data-origin="settings"></script>
+  <style>
+    :root {
+      --brand-color: #4285F4;
+      --brand-color-hover: #3367d6;
+      --brand-color-light: rgba(66, 133, 244, 0.1);
+      --bg-card: rgba(255, 255, 255, 0.7);
+      --bg-card-hover: rgba(0, 0, 0, 0.03);
+      --bg-back-btn: #ffffff;
+      --text-primary: #333333;
+      --text-secondary: #666666;
+      --border-color: rgba(0, 0, 0, 0.1);
+      --border-light: rgba(0, 0, 0, 0.05);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-card: rgba(44, 44, 46, 0.7);
+        --bg-card-hover: rgba(255, 255, 255, 0.05);
+        --bg-back-btn: #2c2c2e;
+        --text-primary: #f2f2f7;
+        --text-secondary: #aeaeb2;
+        --border-color: rgba(255, 255, 255, 0.12);
+        --border-light: rgba(255, 255, 255, 0.06);
+      }
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      margin: 0;
+      overflow-x: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: var(--text-primary);
+    }
+
+    .content {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      display: flex;
+      flex-direction: column;
+      padding: 10px 15px 30px 15px;
+      box-sizing: border-box;
+    }
+
+    /* SPA view management */
+    .view {
+      display: none;
+    }
+
+    .view.is-active {
+      display: block;
+    }
+
+    #view-selector.is-active {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    /* Subtitle */
+    .subtitle {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+      margin-top: 6px;
+      margin-bottom: 20px;
+    }
+
+    /* Main Menu list items */
+    .menu-list-container {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 15px;
+    }
+
+    .menu-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 16px;
+      background-color: var(--bg-card);
+      cursor: pointer;
+      transition: background-color 0.2s, transform 0.1s, border-color 0.2s;
+      text-decoration: none;
+      color: inherit;
+    }
+
+    .menu-item:hover {
+      background-color: var(--bg-card-hover);
+    }
+
+    .menu-item:active {
+      transform: scale(0.99);
+    }
+
+    .menu-item-content {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .menu-item-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 10px;
+      background-color: var(--brand-color-light);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--brand-color);
+      flex-shrink: 0;
+    }
+
+    .menu-item-text {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .menu-item-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .menu-item-subtitle {
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .menu-item-arrow {
+      color: #999;
+      font-size: 20px;
+      font-weight: bold;
+    }
+
+    /* Top Back Button */
+    .back-item {
+      margin-bottom: 20px;
+      border-color: var(--border-color);
+      background-color: var(--bg-back-btn);
+      justify-content: flex-start;
+      gap: 10px;
+      padding: 12px 16px;
+    }
+
+    .back-item .menu-item-title {
+      color: var(--brand-color);
+    }
+
+    .back-item .menu-item-arrow {
+      color: var(--brand-color);
+    }
+
+    /* Notice Box */
+    .notice-box {
+      margin-top: 10px;
+      margin-bottom: 20px;
+      padding: 14px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .notice-box.info {
+      background-color: var(--brand-color-light);
+      border: 1px solid rgba(66, 133, 244, 0.3);
+      color: var(--text-primary);
+    }
+
+    /* Device Selector Styles */
+    .search-container {
+      margin-bottom: 15px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: var(--bg-card);
+      padding: 10px 0;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .zone-group {
+      margin-bottom: 25px;
+    }
+
+    .zone-title {
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+      margin-bottom: 10px;
+      padding-bottom: 5px;
+      border-bottom: 1px solid var(--border-light);
+    }
+
+    .device-item {
+      display: flex;
+      align-items: flex-start;
+      padding: 12px;
+      border-bottom: 1px solid var(--border-light);
+      cursor: pointer;
+    }
+
+    .device-item input[type="checkbox"] {
+      margin-top: 2px;
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+
+    .device-item:last-child {
+      border-bottom: none;
+    }
+
+    .device-info {
+      flex: 1;
+      margin-left: 12px;
+    }
+
+    .device-name {
+      font-size: 15px;
+      font-weight: 500;
+    }
+
+    .device-class {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .device-item.is-selected {
+      background-color: var(--brand-color-light);
+      border-radius: 8px;
+    }
+
+    .device-qa-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .device-qa-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .device-qa-select {
+      font-size: 12px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border-color);
+      background-color: var(--bg-card);
+      color: var(--text-primary);
+      outline: none;
+      cursor: pointer;
+    }
+
+    .device-qa-select:focus {
+      border-color: var(--brand-color);
+    }
+
+    .device-qa-input {
+      font-size: 12px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border-color);
+      background-color: var(--bg-card);
+      color: var(--text-primary);
+      outline: none;
+      width: 140px;
+      box-sizing: border-box;
+    }
+
+    .device-qa-input:focus {
+      border-color: var(--brand-color);
+    }
+
+    .device-list {
+      flex: 1;
+      overflow-y: auto;
+      margin-bottom: 15px;
+    }
+
+    /* Counter Badge */
+    .counter-badge {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 8px;
+      border-radius: 12px;
+      background-color: var(--brand-color-light);
+      color: var(--brand-color);
+      transition: background-color 0.2s, color 0.2s;
+    }
+
+    .counter-badge.limit-exceeded {
+      background-color: rgba(220, 53, 69, 0.15);
+      color: #dc3545;
+    }
+
+    /* Native Homey Toggle Switch */
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 50px;
+      height: 28px;
+      flex-shrink: 0;
+    }
+
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: .3s;
+      border-radius: 28px;
+    }
+
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 22px;
+      width: 22px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .3s;
+      border-radius: 50%;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+
+    input:checked + .toggle-slider {
+      background-color: var(--brand-color);
+    }
+
+    input:checked + .toggle-slider:before {
+      transform: translateX(22px);
+    }
+
+    /* Diagnostic Logs Cards */
+    .log-file-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 12px 14px;
+      background-color: var(--bg-card);
+      margin-bottom: 8px;
+    }
+
+    .log-file-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .log-file-title {
+      font-size: 14px;
+      font-weight: 600;
+      font-family: monospace;
+    }
+
+    .log-file-meta {
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    .log-file-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    /* Toast Notifications */
+    .toast, #toast {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 12px 20px;
+      background-color: #28a745;
+      color: white;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      pointer-events: none;
+      z-index: 1000;
+      text-align: center;
+      max-width: 90%;
+    }
+
+    .toast.show, #toast.show {
+      opacity: 1;
+    }
+
+    .toast.success, #toast.success {
+      background-color: #28a745;
+    }
+
+    .toast.error, #toast.error {
+      background-color: #dc3545;
+    }
+
+    .toast.warning, #toast.warning {
+      background-color: #ffc107;
+      color: #856404;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="content">
+
+    <!-- VIEW 0: MAIN MENU -->
+    <div id="view-menu" class="view is-active">
+      <header class="homey-header" style="margin-bottom: 10px;">
+        <h1 class="homey-title" data-i18n="settings.menu.title">Wear OS Settings</h1>
+      </header>
+
+      <div class="menu-list-container">
+        <!-- Submenu 1: Watch Quick Devices -->
+        <div id="nav_home_config" class="menu-item" role="button" tabindex="0">
+          <div class="menu-item-content">
+            <div class="menu-item-icon">
+              <!-- Smartwatch Icon -->
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="6" y="7" width="12" height="10" rx="3"></rect>
+                <path d="M9 7V3h6v4"></path>
+                <path d="M9 17v4h6v-4"></path>
+              </svg>
+            </div>
+            <div class="menu-item-text">
+              <span class="menu-item-title" data-i18n="settings.menu.home_config_title">Watch Quick Devices</span>
+              <span class="menu-item-subtitle" data-i18n="settings.menu.home_config_desc">Select up to 4 lights, locks, or doors for quick control and Wear OS Tiles.</span>
+            </div>
+          </div>
+          <div class="menu-item-arrow">›</div>
+        </div>
+
+        <!-- Submenu 2: Debug & Diagnostics -->
+        <div id="nav_debug" class="menu-item" role="button" tabindex="0">
+          <div class="menu-item-content">
+            <div class="menu-item-icon">
+              <!-- Terminal / Diagnostic Icon -->
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="4 17 10 11 4 5"></polyline>
+                <line x1="12" y1="19" x2="20" y2="19"></line>
+              </svg>
+            </div>
+            <div class="menu-item-text">
+              <span class="menu-item-title" data-i18n="settings.menu.debug_title">Debug & Diagnostics</span>
+              <span class="menu-item-subtitle" data-i18n="settings.menu.debug_desc">Manage debug logging and diagnostic options.</span>
+            </div>
+          </div>
+          <div class="menu-item-arrow">›</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 1: WATCH QUICK DEVICES SELECTOR -->
+    <div id="view-selector" class="view">
+      <div class="menu-item back-item back-btn" role="button" tabindex="0">
+        <div class="menu-item-arrow">‹</div>
+        <div class="menu-item-text">
+          <span class="menu-item-title" data-i18n="settings.common.back">Back</span>
+        </div>
+      </div>
+
+      <header class="homey-header" style="margin-bottom: 6px;">
+        <h1 class="homey-title" data-i18n="settings.home_config.title">Watch Quick Devices</h1>
+      </header>
+      <div class="subtitle" data-i18n="settings.home_config.subtitle">
+        Select up to 4 devices for your 2x2 Quick Actions Tile. If none are selected, your Favorite devices will be shown.
+      </div>
+
+      <div class="search-container">
+        <input type="text" id="deviceSearchInput" class="homey-form-input" style="flex:1" data-i18n-placeholder="settings.home_config.search_placeholder" placeholder="Search device">
+        <div id="selectionCounterLabel" class="counter-badge">0 / 4</div>
+      </div>
+
+      <div id="deviceList" class="device-list">
+        <!-- Injected via JavaScript -->
+      </div>
+
+      <div style="margin-top: 10px; display: flex; justify-content: flex-end;">
+        <button id="saveBtn" type="button" class="homey-button-primary-shadow" data-i18n="settings.common.save">Save</button>
+      </div>
+    </div>
+
+    <!-- VIEW 2: DEBUG & DIAGNOSTICS -->
+    <div id="view-debug" class="view">
+      <div class="menu-item back-item back-btn" role="button" tabindex="0">
+        <div class="menu-item-arrow">‹</div>
+        <div class="menu-item-text">
+          <span class="menu-item-title" data-i18n="settings.common.back">Back</span>
+        </div>
+      </div>
+
+      <header class="homey-header" style="margin-bottom: 6px;">
+        <h1 class="homey-title" data-i18n="settings.debug.title">Debug & Diagnostics</h1>
+      </header>
+      <div class="subtitle" data-i18n="settings.debug.subtitle">
+        Enable verbose diagnostic logs for troubleshooting integration issues.
+      </div>
+
+      <div class="notice-box info" data-i18n="settings.debug.notice_info">
+        Debug logging produces detailed execution traces. All sensitive credentials, tokens, and GPS coordinates are masked automatically in accordance with security guidelines.
+      </div>
+
+      <div id="debugCard" class="menu-item" style="cursor: pointer; margin-bottom: 25px;">
+        <div class="menu-item-content">
+          <div class="menu-item-text">
+            <span class="menu-item-title" data-i18n="settings.debug.enable_label">Debug Logging</span>
+            <span class="menu-item-subtitle" data-i18n="settings.debug.enable_desc">Record verbose operational logs for API requests and device filtering.</span>
+          </div>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="debug_logging_enabled">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <h2 style="font-size: 15px; font-weight: 700; margin: 0;" data-i18n="settings.debug.files_heading">Stored Diagnostic Logs</h2>
+        <div style="display: flex; gap: 8px;">
+          <button id="btnRefreshFileList" type="button" class="homey-button-secondary" style="font-size: 12px; padding: 4px 10px; margin: 0;" data-i18n="settings.debug.btn_refresh">Refresh</button>
+          <button id="btnClearAllFiles" type="button" class="homey-button-secondary" style="font-size: 12px; padding: 4px 10px; margin: 0; color: #dc3545;" data-i18n="settings.debug.btn_clear_all">Clear All</button>
+        </div>
+      </div>
+
+      <div id="logsFileList" style="display: flex; flex-direction: column; gap: 8px;">
+        <!-- Injected via JavaScript -->
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Centered Toast Notification -->
+  <div id="toast" class="toast"></div>
+
+  <script type="text/javascript">
+    function onHomeyReady(Homey) {
+      Homey.ready();
+
+      const MAX_WATCH_DEVICES = 4;
+
+      // Views
+      const viewMenu = document.getElementById('view-menu');
+      const viewSelector = document.getElementById('view-selector');
+      const viewDebug = document.getElementById('view-debug');
+
+      // Elements
+      const toast = document.getElementById('toast');
+      const deviceList = document.getElementById('deviceList');
+      const deviceSearchInput = document.getElementById('deviceSearchInput');
+      const selectionCounterLabel = document.getElementById('selectionCounterLabel');
+      const saveBtn = document.getElementById('saveBtn');
+
+      const debugCard = document.getElementById('debugCard');
+      const debugChk = document.getElementById('debug_logging_enabled');
+      const logsFileList = document.getElementById('logsFileList');
+      const btnRefreshFileList = document.getElementById('btnRefreshFileList');
+      const btnClearAllFiles = document.getElementById('btnClearAllFiles');
+
+      // State
+      let allDevices = [];
+      let allZones = {};
+      let selectedWatchDeviceIds = [];
+      let selectedWatchDeviceCapabilities = {};
+      let selectedWatchDeviceNames = {};
+
+      // ── View Switching ──────────────────────────────────────────────────────────
+
+      /**
+       * Switches active SPA view.
+       *
+       * @private
+       * @param {HTMLElement} targetView - Target view element.
+       */
+      function _showView(targetView) {
+        document.querySelectorAll('.view').forEach(v => v.classList.remove('is-active'));
+        if (targetView) targetView.classList.add('is-active');
+        window.scrollTo(0, 0);
+      }
+
+      /**
+       * Shows a toast message.
+       *
+       * @private
+       * @param {string} message
+       * @param {'success'|'warning'|'error'} [type='success']
+       */
+      function _showToast(message, type = 'success') {
+        toast.textContent = message;
+        toast.classList.remove('success', 'warning', 'error');
+        toast.classList.add(type);
+        toast.classList.add('show');
+        setTimeout(() => toast.classList.remove('show'), 3000);
+      }
+
+      /**
+       * Loads base devices and zones from Homey API.
+       *
+       * @private
+       * @param {Function} callback
+       */
+      function _fetchBaseData(callback) {
+        if (allDevices.length > 0 && Object.keys(allZones).length > 0) {
+          return callback();
+        }
+
+        Homey.api('GET', '/zones', null, (err, zones) => {
+          if (err) {
+            console.error('[Settings] Failed to load zones:', err);
+            _showToast(Homey.__('settings.common.error_generic'), 'error');
+            return;
+          }
+          allZones = zones || {};
+
+          Homey.api('GET', '/devices', null, (dErr, devices) => {
+            if (dErr) {
+              console.error('[Settings] Failed to load devices:', dErr);
+              _showToast(Homey.__('settings.common.error_generic'), 'error');
+              return;
+            }
+
+            allDevices = Object.values(devices || {});
+            callback();
+          });
+        });
+      }
+
+      // ── Watch Devices Selection Logic ──────────────────────────────────────────
+
+      /**
+       * Loads configuration data for Watch devices.
+       *
+       * @private
+       */
+      function _loadWatchConfigData() {
+        deviceList.innerHTML = '<p style="text-align:center; padding:20px; color:#999">' + Homey.__('settings.home_config.loading') + '</p>';
+        _fetchBaseData(() => {
+          Homey.get('wearos_devices_ids', (err, val) => {
+            selectedWatchDeviceIds = Array.isArray(val) ? val : [];
+            Homey.get('wearos_device_capabilities', (cErr, cVal) => {
+              selectedWatchDeviceCapabilities = (cVal && typeof cVal === 'object' && !Array.isArray(cVal)) ? cVal : {};
+              Homey.get('wearos_device_names', (nErr, nVal) => {
+                selectedWatchDeviceNames = (nVal && typeof nVal === 'object' && !Array.isArray(nVal)) ? nVal : {};
+                _renderWatchDeviceList(deviceSearchInput.value);
+                _updateWatchCounter();
+              });
+            });
+          });
+        });
+      }
+
+      /**
+       * Renders the device list for Watch selection using hierarchical DFS zone order
+       * and device custom order within each zone.
+       *
+       * @private
+       * @param {string} [filter='']
+       */
+      function _renderWatchDeviceList(filter = '') {
+        deviceList.innerHTML = '';
+        const search = filter.toLowerCase();
+
+        // 1. Build hierarchical zone ordering (DFS from roots, sort by sortIndex then name)
+        const childrenMap = {};
+        Object.values(allZones).forEach(z => {
+          const parentId = z.parent || null;
+          if (!childrenMap[parentId]) childrenMap[parentId] = [];
+          childrenMap[parentId].push(z);
+        });
+
+        Object.values(childrenMap).forEach(list => {
+          list.sort((a, b) => {
+            const aIdx = (typeof a.sortIndex === 'number') ? a.sortIndex : 999999;
+            const bIdx = (typeof b.sortIndex === 'number') ? b.sortIndex : 999999;
+            if (aIdx !== bIdx) return aIdx - bIdx;
+            return (a.name || '').localeCompare(b.name || '');
+          });
+        });
+
+        const orderedZoneIds = [];
+        function dfs(parentId) {
+          const children = childrenMap[parentId] || [];
+          children.forEach(child => {
+            orderedZoneIds.push(child.id);
+            dfs(child.id);
+          });
+        }
+        dfs(null);
+
+        // Include any orphan zones not reached by DFS
+        Object.keys(allZones).forEach(zId => {
+          if (!orderedZoneIds.includes(zId)) orderedZoneIds.push(zId);
+        });
+
+        // 2. Helper to build full zone path name (e.g. "Piano Terra - Salotto")
+        function _buildZonePath(zoneId) {
+          const path = [];
+          let current = allZones[zoneId];
+          while (current) {
+            if (current.parent) {
+              path.push(current.name);
+            }
+            current = current.parent ? allZones[current.parent] : null;
+          }
+          if (path.length === 0) {
+            return allZones[zoneId]?.name || 'Home';
+          }
+          return path.reverse().join(' - ');
+        }
+
+        // 3. Group devices by zone
+        const grouped = {};
+        allDevices.forEach(d => {
+          const zoneId = d.zone || 'unknown';
+          const zonePath = _buildZonePath(d.zone);
+          if (d.name.toLowerCase().includes(search) || zonePath.toLowerCase().includes(search)) {
+            if (!grouped[zoneId]) grouped[zoneId] = [];
+            grouped[zoneId].push(d);
+          }
+        });
+
+        // Filter orderedZoneIds to only those with matching devices
+        const activeZoneIds = orderedZoneIds.filter(zId => grouped[zId] && grouped[zId].length > 0);
+
+        if (activeZoneIds.length === 0) {
+          deviceList.innerHTML = '<p style="text-align:center; padding:20px; color:#999">' + Homey.__('settings.home_config.no_devices') + '</p>';
+          return;
+        }
+
+        activeZoneIds.forEach(zoneId => {
+          const zonePathName = _buildZonePath(zoneId);
+          const zoneDiv = document.createElement('div');
+          zoneDiv.className = 'zone-group';
+          zoneDiv.innerHTML = '<div class="zone-title">' + zonePathName + '</div>';
+
+          // Sort devices in this zone by zoneSortIndex then by name
+          const devicesInZone = grouped[zoneId];
+          devicesInZone.sort((a, b) => {
+            const aSort = (typeof a.zoneSortIndex === 'number') ? a.zoneSortIndex : 999999;
+            const bSort = (typeof b.zoneSortIndex === 'number') ? b.zoneSortIndex : 999999;
+            if (aSort !== bSort) return aSort - bSort;
+            return (a.name || '').localeCompare(b.name || '');
+          });
+
+          devicesInZone.forEach(device => {
+            const item = document.createElement('div');
+            const isChecked = selectedWatchDeviceIds.indexOf(device.id) !== -1;
+            item.className = 'device-item' + (isChecked ? ' is-selected' : '');
+
+            let customOptionsHtml = '';
+            if (isChecked) {
+              const currentLabel = (selectedWatchDeviceNames[device.id] !== undefined && selectedWatchDeviceNames[device.id] !== null)
+                ? selectedWatchDeviceNames[device.id]
+                : device.name;
+
+              const labelRowHtml = `
+                <div class="device-qa-row">
+                  <span class="device-qa-label">${Homey.__('settings.home_config.tile_label')}:</span>
+                  <input type="text" class="device-qa-input" id="lbl_${device.id}" value="${currentLabel}" placeholder="${device.name}">
+                </div>
+              `;
+
+              let qaSelectHtml = '';
+              if (Array.isArray(device.quickActions) && device.quickActions.length > 0) {
+                const currentCap = selectedWatchDeviceCapabilities[device.id] || device.selectedQuickAction || device.quickActions[0].id;
+                const optionsHtml = device.quickActions.map(qa => {
+                  const selectedAttr = qa.id === currentCap ? ' selected' : '';
+                  return `<option value="${qa.id}"${selectedAttr}>${qa.title} (${qa.id})</option>`;
+                }).join('');
+
+                qaSelectHtml = `
+                  <div class="device-qa-row">
+                    <span class="device-qa-label">${Homey.__('settings.home_config.quick_action')}:</span>
+                    <select class="device-qa-select" id="qa_${device.id}">
+                      ${optionsHtml}
+                    </select>
+                  </div>
+                `;
+              }
+
+              customOptionsHtml = labelRowHtml + qaSelectHtml;
+            }
+
+            item.innerHTML = `
+              <input type="checkbox" id="chk_${device.id}" ${isChecked ? 'checked' : ''} ${!isChecked && selectedWatchDeviceIds.length >= MAX_WATCH_DEVICES ? 'disabled' : ''}>
+              <div class="device-info">
+                <div class="device-name">${device.name}</div>
+                <div class="device-class">${device.class}</div>
+                ${customOptionsHtml}
+              </div>
+            `;
+
+            item.onclick = (e) => {
+              if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION' || e.target.closest('.device-qa-row')) return;
+              const chk = document.getElementById('chk_' + device.id);
+              if (!chk.disabled) {
+                chk.checked = !chk.checked;
+                _handleWatchDeviceSelection(device.id, chk.checked, device);
+              }
+            };
+
+            item.querySelector('input').onchange = (e) => {
+              _handleWatchDeviceSelection(device.id, e.target.checked, device);
+            };
+
+            const selectEl = item.querySelector('.device-qa-select');
+            if (selectEl) {
+              selectEl.onchange = (e) => {
+                selectedWatchDeviceCapabilities[device.id] = e.target.value;
+              };
+            }
+
+            const inputEl = item.querySelector('.device-qa-input');
+            if (inputEl) {
+              inputEl.oninput = (e) => {
+                selectedWatchDeviceNames[device.id] = e.target.value;
+              };
+            }
+
+            zoneDiv.appendChild(item);
+          });
+
+          deviceList.appendChild(zoneDiv);
+        });
+      }
+
+      /**
+       * Handles selection toggle.
+       *
+       * @private
+       * @param {string} id
+       * @param {boolean} isSelected
+       * @param {object} [device=null]
+       */
+      function _handleWatchDeviceSelection(id, isSelected, device = null) {
+        if (isSelected) {
+          if (selectedWatchDeviceIds.length < MAX_WATCH_DEVICES) {
+            selectedWatchDeviceIds.push(id);
+            if (!selectedWatchDeviceCapabilities[id] && device && Array.isArray(device.quickActions) && device.quickActions.length > 0) {
+              selectedWatchDeviceCapabilities[id] = device.selectedQuickAction || device.quickActions[0].id;
+            }
+            if ((selectedWatchDeviceNames[id] === undefined || selectedWatchDeviceNames[id] === null) && device) {
+              selectedWatchDeviceNames[id] = device.name;
+            }
+          }
+        } else {
+          selectedWatchDeviceIds = selectedWatchDeviceIds.filter(i => i !== id);
+          delete selectedWatchDeviceCapabilities[id];
+          delete selectedWatchDeviceNames[id];
+        }
+        _updateWatchCounter();
+        _renderWatchDeviceList(deviceSearchInput.value);
+      }
+
+      /**
+       * Updates selection counter badge.
+       *
+       * @private
+       */
+      function _updateWatchCounter() {
+        selectionCounterLabel.innerText = selectedWatchDeviceIds.length + ' / ' + MAX_WATCH_DEVICES;
+        selectionCounterLabel.classList.remove('limit-exceeded');
+        if (selectedWatchDeviceIds.length > MAX_WATCH_DEVICES) {
+          selectionCounterLabel.classList.add('limit-exceeded');
+        }
+      }
+
+      // ── Debug Logging Logic ───────────────────────────────────────────────────
+
+      /**
+       * Loads debug setting state and file list.
+       *
+       * @private
+       */
+      function _loadDebugData() {
+        Homey.get('debug_logging_enabled', (err, val) => {
+          if (debugChk) debugChk.checked = Boolean(val);
+        });
+        _fetchLogFiles();
+      }
+
+      /**
+       * Saves debug setting.
+       *
+       * @private
+       * @param {boolean} isEnabled
+       */
+      function _saveDebugSetting(isEnabled) {
+        if (debugChk) debugChk.checked = isEnabled;
+        Homey.set('debug_logging_enabled', isEnabled, (err) => {
+          if (err) {
+            console.error('[Settings] Error saving debug_logging_enabled:', err);
+            _showToast(Homey.__('settings.common.error_generic'), 'error');
+            return;
+          }
+          _showToast(Homey.__('settings.common.saved'), 'success');
+        });
+      }
+
+      /**
+       * Fetches diagnostic log files status.
+       *
+       * @private
+       */
+      function _fetchLogFiles() {
+        if (!logsFileList) return;
+        logsFileList.innerHTML = '<p style="text-align:center; padding:15px; color:#999">' + Homey.__('settings.debug.loading_files') + '</p>';
+        Homey.api('GET', '/log/status', null, (err, status) => {
+          if (err) {
+            console.error('[Settings] Failed to fetch log status:', err);
+            logsFileList.innerHTML = '<p style="text-align:center; padding:15px; color:#e74c3c">' + Homey.__('settings.common.error_generic') + '</p>';
+            return;
+          }
+          _renderFileList(status?.files || []);
+        });
+      }
+
+      /**
+       * Renders log file cards.
+       *
+       * @private
+       * @param {Array<object>} files
+       */
+      function _renderFileList(files) {
+        if (!logsFileList) return;
+        logsFileList.innerHTML = '';
+        if (!files || files.length === 0) {
+          logsFileList.innerHTML = '<div class="log-file-card" style="justify-content: center;"><span style="font-size: 13px; color: var(--text-secondary);">' + Homey.__('settings.debug.no_files') + '</span></div>';
+          return;
+        }
+
+        files.forEach(file => {
+          const card = document.createElement('div');
+          card.className = 'log-file-card';
+          const formattedDate = new Date(file.modified).toLocaleString();
+
+          card.innerHTML = `
+            <div class="log-file-info">
+              <div class="log-file-title">${file.name}</div>
+              <div class="log-file-meta"><span>${file.sizeFormatted}</span> &bull; <span>${formattedDate}</span></div>
+            </div>
+            <div class="log-file-actions">
+              <button type="button" class="homey-button-secondary btn-download-file" data-index="${file.index}" style="font-size: 12px; padding: 4px 10px; margin: 0;">
+                ${Homey.__('settings.debug.btn_download')}
+              </button>
+              <button type="button" class="homey-button-secondary btn-delete-file" data-index="${file.index}" style="font-size: 12px; padding: 4px 10px; margin: 0; color: #dc3545;">
+                ${Homey.__('settings.debug.btn_delete')}
+              </button>
+            </div>
+          `;
+
+          const downloadBtn = card.querySelector('.btn-download-file');
+          downloadBtn.addEventListener('click', () => _downloadLogFile(file.index, downloadBtn));
+
+          card.querySelector('.btn-delete-file').addEventListener('click', () => _deleteSingleLogFile(file.index, file.name));
+          logsFileList.appendChild(card);
+        });
+      }
+
+      /**
+       * Downloads a log file.
+       *
+       * @private
+       * @param {number} index
+       * @param {HTMLButtonElement} buttonEl
+       */
+      function _downloadLogFile(index, buttonEl) {
+        if (buttonEl) buttonEl.disabled = true;
+        Homey.api('GET', '/log/download/' + index, null, (err, url) => {
+          if (buttonEl) buttonEl.disabled = false;
+          if (err) return _showToast(Homey.__('settings.debug.download_error') + ': ' + (err.message || err), 'error');
+          if (url && typeof url === 'string') Homey.openURL(url);
+        });
+      }
+
+      /**
+       * Deletes a single log file.
+       *
+       * @private
+       * @param {number} index
+       * @param {string} fileName
+       */
+      function _deleteSingleLogFile(index, fileName) {
+        const confirmMsg = Homey.__('settings.debug.confirm_delete_file').replace('{0}', fileName);
+        Homey.confirm(confirmMsg, 'warning', (err, confirmed) => {
+          if (err || !confirmed) return;
+          Homey.api('DELETE', '/log/' + index, null, (deleteErr) => {
+            if (deleteErr) return _showToast(Homey.__('settings.common.error_generic'), 'error');
+            _showToast(Homey.__('settings.debug.msg_file_deleted'), 'success');
+            _fetchLogFiles();
+          });
+        });
+      }
+
+      // ── Event Listeners Setup ─────────────────────────────────────────────────
+
+      document.getElementById('nav_home_config').addEventListener('click', () => {
+        _showView(viewSelector);
+        _loadWatchConfigData();
+      });
+
+      document.querySelectorAll('.back-btn').forEach(btn => {
+        btn.addEventListener('click', () => _showView(viewMenu));
+      });
+
+      deviceSearchInput.addEventListener('input', (e) => _renderWatchDeviceList(e.target.value));
+
+      saveBtn.addEventListener('click', () => {
+        saveBtn.disabled = true;
+
+        // Prune capabilities and custom names for unselected devices
+        const cleanedCapabilities = {};
+        const cleanedNames = {};
+        for (const id of selectedWatchDeviceIds) {
+          if (selectedWatchDeviceCapabilities[id]) {
+            cleanedCapabilities[id] = selectedWatchDeviceCapabilities[id];
+          }
+          if (selectedWatchDeviceNames[id] !== undefined && selectedWatchDeviceNames[id] !== null) {
+            const trimmed = String(selectedWatchDeviceNames[id]).trim();
+            if (trimmed.length > 0) {
+              cleanedNames[id] = trimmed;
+            }
+          }
+        }
+        selectedWatchDeviceCapabilities = cleanedCapabilities;
+        selectedWatchDeviceNames = cleanedNames;
+
+        Homey.set('wearos_devices_ids', selectedWatchDeviceIds, (err) => {
+          if (err) {
+            saveBtn.disabled = false;
+            console.error('[Settings] Error saving wearos_devices_ids:', err);
+            _showToast(Homey.__('settings.common.error_generic'), 'error');
+            return;
+          }
+
+          Homey.set('wearos_device_capabilities', selectedWatchDeviceCapabilities, (cErr) => {
+            if (cErr) {
+              saveBtn.disabled = false;
+              console.error('[Settings] Error saving wearos_device_capabilities:', cErr);
+              _showToast(Homey.__('settings.common.error_generic'), 'error');
+              return;
+            }
+
+            Homey.set('wearos_device_names', selectedWatchDeviceNames, (nErr) => {
+              saveBtn.disabled = false;
+              if (nErr) {
+                console.error('[Settings] Error saving wearos_device_names:', nErr);
+                _showToast(Homey.__('settings.common.error_generic'), 'error');
+                return;
+              }
+              _showToast(Homey.__('settings.common.saved'), 'success');
+            });
+          });
+        });
+      });
+
+      document.getElementById('nav_debug').addEventListener('click', () => {
+        _showView(viewDebug);
+        _loadDebugData();
+      });
+
+      if (debugCard) {
+        debugCard.onclick = (e) => {
+          if (e.target.closest('.toggle-switch')) return;
+          _saveDebugSetting(!debugChk.checked);
+        };
+      }
+
+      if (debugChk) {
+        debugChk.onchange = (e) => _saveDebugSetting(e.target.checked);
+      }
+
+      if (btnRefreshFileList) {
+        btnRefreshFileList.addEventListener('click', () => _fetchLogFiles());
+      }
+
+      if (btnClearAllFiles) {
+        btnClearAllFiles.addEventListener('click', () => {
+          Homey.confirm(Homey.__('settings.debug.confirm_clear_all'), 'warning', (err, confirmed) => {
+            if (err || !confirmed) return;
+            Homey.api('DELETE', '/log/all', null, (deleteErr) => {
+              if (deleteErr) return _showToast(Homey.__('settings.common.error_generic'), 'error');
+              _showToast(Homey.__('settings.debug.msg_cleared'), 'success');
+              _fetchLogFiles();
+            });
+          });
+        });
+      }
+    }
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,15 @@
+# The env.json file MUST be uploaded to the homey portal
+# env.json
+env.example.json
+
+node_modules/
+.homey/
+
+
+# Added by Homey CLI
+/.homeybuild/
+
+/.agent
+/img
+release.ps1
+AI_PROJECT_HANDBOOK.md

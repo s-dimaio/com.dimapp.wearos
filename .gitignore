@@ -1,0 +1,14 @@
+node_modules/
+.homey/
+/.homeybuild/
+userdata/
+env.json
+
+# AI Project Handbook
+/AI_PROJECT_HANDBOOK.md
+
+# Release script & scratch
+release.ps1
+scratch/
+/images
+

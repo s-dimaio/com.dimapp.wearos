@@ -1,0 +1,58 @@
+{
+  "app_name": "Wear OS Companion",
+  "app_description": "App companion per HomeyWatch su Wear OS — gestisce l'autenticazione e i comandi rapidi dell'orologio.",
+  "auth_session_started": "Sessione di autenticazione avviata.",
+  "auth_session_not_found": "Sessione di autenticazione non trovata o scaduta.",
+  "auth_session_expired": "La sessione di autenticazione è scaduta. Riprova.",
+  "auth_complete": "Autenticazione completata.",
+  "auth_pending": "Autenticazione in attesa — in attesa dell'autorizzazione dell'utente.",
+  "error_missing_session_id": "Parametro obbligatorio mancante: sessionId.",
+  "error_internal": "Si è verificato un errore interno. Riprova.",
+  "error_token_exchange": "Impossibile scambiare il codice di autorizzazione con il token di accesso.",
+  "settings": {
+    "menu": {
+      "title": "Impostazioni Wear OS",
+      "home_config_title": "Dispositivi Rapidi Smartwatch",
+      "home_config_desc": "Seleziona fino a 4 luci, serrature o porte per il controllo rapido e i Tile Wear OS.",
+      "debug_title": "Debug e Diagnostica",
+      "debug_desc": "Gestisci la registrazione dei log di debug e le opzioni diagnostiche."
+    },
+    "debug": {
+      "title": "Debug e Diagnostica",
+      "subtitle": "Abilita i log diagnostici dettagliati per l'analisi dei problemi di integrazione.",
+      "notice_info": "La registrazione di debug genera tracce dettagliate di esecuzione. Tutte le credenziali sensibili, i token e le coordinate GPS vengono mascherati automaticamente nel rispetto delle linee guida di sicurezza.",
+      "enable_label": "Log di Debug",
+      "enable_desc": "Registra log operativi dettagliati per le richieste API e il filtraggio dei dispositivi.",
+      "files_heading": "File di Log Archiviati",
+      "btn_refresh": "Aggiorna",
+      "btn_clear_all": "Cancella Tutto",
+      "btn_download": "Scarica",
+      "btn_delete": "Elimina",
+      "loading_files": "Caricamento file di log...",
+      "no_files": "Nessun file di log diagnostico trovato.",
+      "download_error": "Impossibile generare l'URL di download del log",
+      "confirm_delete_file": "Sei sicuro di voler eliminare {0}?",
+      "confirm_clear_all": "Sei sicuro di voler eliminare tutti i file di log diagnostici?",
+      "msg_file_deleted": "File di log eliminato con successo.",
+      "msg_cleared": "Tutti i file di log cancellati con successo."
+    },
+    "home_config": {
+      "title": "Dispositivi Rapidi Smartwatch",
+      "subtitle": "Seleziona fino a 4 dispositivi per il Riquadro Rapido 2x2 (Tile) dell'orologio. Se non viene selezionato alcun dispositivo, verranno mostrati i Preferiti.",
+      "search_placeholder": "Cerca dispositivo",
+      "max_reached": "Hai raggiunto il limite massimo di 4 dispositivi.",
+      "loading": "Caricamento dispositivi...",
+      "no_devices": "Nessuna luce o serratura trovata.",
+      "quick_action": "Azione",
+      "tile_label": "Nome",
+      "tile_label_placeholder": "Nome predefinito"
+    },
+    "common": {
+      "save": "Salva",
+      "back": "Indietro",
+      "back_to_menu": "← Torna alle Impostazioni",
+      "saved": "Impostazioni salvate con successo!",
+      "error_generic": "Si è verificato un errore durante il salvataggio."
+    }
+  }
+}

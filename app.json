@@ -1,0 +1,90 @@
+{
+  "_comment": "This file is generated. Please edit .homeycompose/app.json instead.",
+  "id": "com.dimapp.wearos",
+  "version": "1.0.0",
+  "compatibility": ">=12.0.0",
+  "sdk": 3,
+  "brandColor": "#4285F4",
+  "platforms": [
+    "local"
+  ],
+  "name": {
+    "en": "Wear OS by Google",
+    "it": "Wear OS Companion"
+  },
+  "description": {
+    "en": "Connect your Wear OS smartwatch to Homey.",
+    "it": "Collega il tuo smartwatch Wear OS a Homey."
+  },
+  "author": {
+    "name": "Simone Di Maio",
+    "email": "simone.dimaio77@gmail.com"
+  },
+  "category": [
+    "tools"
+  ],
+  "permissions": [
+    "homey:manager:api"
+  ],
+  "images": {
+    "small": "/assets/images/small.png",
+    "large": "/assets/images/large.png",
+    "xlarge": "/assets/images/xlarge.png"
+  },
+  "contributing": {
+    "donate": {
+      "paypal": {
+        "username": "sdimaio77"
+      }
+    }
+  },
+  "api": {
+    "startAuth": {
+      "method": "POST",
+      "path": "/auth/start",
+      "public": true
+    },
+    "pollAuth": {
+      "method": "GET",
+      "path": "/auth/poll",
+      "public": true
+    },
+    "refreshAuth": {
+      "method": "POST",
+      "path": "/auth/refresh",
+      "public": true
+    },
+    "getDashboards": {
+      "method": "GET",
+      "path": "/dashboards"
+    },
+    "getDevices": {
+      "method": "GET",
+      "path": "/devices"
+    },
+    "getZones": {
+      "method": "GET",
+      "path": "/zones"
+    },
+    "getLogStatus": {
+      "method": "GET",
+      "path": "/log/status"
+    },
+    "getLogDownloadFile": {
+      "method": "GET",
+      "path": "/log/download/:index"
+    },
+    "deleteAllLogs": {
+      "method": "DELETE",
+      "path": "/log/all"
+    },
+    "deleteLogFile": {
+      "method": "DELETE",
+      "path": "/log/:index"
+    }
+  },
+  "source": "https://github.com/s-dimaio/com.dimapp.wearos",
+  "bugs": {
+    "url": "https://github.com/s-dimaio/com.dimapp.wearos/issues"
+  }
+}
