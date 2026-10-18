@@ -1,4 +1,4 @@
-# Wear OS Companion for Homey ⌚🏡
+# Wear OS by Google for Homey Pro ⌚🏡
 
 [![Homey Apps SDK v3](https://img.shields.io/badge/Homey%20SDK-v3-00B0FF.svg)](https://apps.developer.homey.app/)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
@@ -10,7 +10,7 @@ The official **Athom Homey Pro** companion application for **Wear OS**. It acts 
 
 ## 🌟 Overview
 
-The **Wear OS Companion** app bridges your Athom Homey Pro smart home ecosystem with your Wear OS 3+ smartwatch. By decoupling client orchestration from a paired smartphone, this companion app allows [HomeyWatch](https://github.com/s-dimaio/HomeyWatch) to operate completely standalone:
+The **Wear OS by Google** app bridges your Athom Homey Pro smart home ecosystem with your Wear OS 3+ smartwatch. By decoupling client orchestration from a paired smartphone, this companion app allows [HomeyWatch](https://github.com/s-dimaio/HomeyWatch) to operate completely standalone:
 - Bootstraps secure OAuth2 authorization directly on the watch or through a smartphone handoff.
 - Generates tailored "Virtual Dashboards" optimized for Wear OS 2x2 Glanceable Tiles and favorite device chips.
 - Exposes filtered device and zone proxies with automated quick-action heuristic candidate ranking.

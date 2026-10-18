@@ -1,5 +1,5 @@
 {
-  "app_name": "Wear OS Companion",
+  "app_name": "Wear OS by Google",
   "app_description": "App companion per HomeyWatch su Wear OS — gestisce l'autenticazione e i comandi rapidi dell'orologio.",
   "auth_session_started": "Sessione di autenticazione avviata.",
   "auth_session_not_found": "Sessione di autenticazione non trovata o scaduta.",
@@ -12,8 +12,8 @@
   "settings": {
     "menu": {
       "title": "Impostazioni Wear OS",
-      "home_config_title": "Dispositivi Rapidi Smartwatch",
-      "home_config_desc": "Seleziona fino a 4 luci, serrature o porte per il controllo rapido e i Tile Wear OS.",
+      "home_config_title": "Configurazione Widget",
+      "home_config_desc": "Scegli fino a 4 dispositivi da mostrare nel widget dell'orologio (Tile), personalizzandone l'azione rapida e il nome breve.",
       "debug_title": "Debug e Diagnostica",
       "debug_desc": "Gestisci la registrazione dei log di debug e le opzioni diagnostiche."
     },
@@ -37,14 +37,14 @@
       "msg_cleared": "Tutti i file di log cancellati con successo."
     },
     "home_config": {
-      "title": "Dispositivi Rapidi Smartwatch",
-      "subtitle": "Seleziona fino a 4 dispositivi per il Riquadro Rapido 2x2 (Tile) dell'orologio. Se non viene selezionato alcun dispositivo, verranno mostrati i Preferiti.",
+      "title": "Configurazione Widget",
+      "subtitle": "Configura i 4 dispositivi per il widget a griglia 2x2 sul quadrante di Wear OS. Per ciascun dispositivo puoi personalizzare l'azione rapida associata e il nome visualizzato. In assenza di selezione, il widget mostrerà i primi 4 Preferiti.",
       "search_placeholder": "Cerca dispositivo",
       "max_reached": "Hai raggiunto il limite massimo di 4 dispositivi.",
       "loading": "Caricamento dispositivi...",
-      "no_devices": "Nessuna luce o serratura trovata.",
-      "quick_action": "Azione",
-      "tile_label": "Nome",
+      "no_devices": "Nessun dispositivo compatibile trovato.",
+      "quick_action": "Azione rapida",
+      "tile_label": "Nome nel widget",
       "tile_label_placeholder": "Nome predefinito"
     },
     "common": {

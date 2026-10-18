@@ -19,7 +19,37 @@ const SESSION_TTL_MS = 2 * 60 * 1000; // 2 minutes
 const ATHOM_TOKEN_URL = 'https://api.athom.com/oauth2/token';
 
 /**
- * Main application class for the Homey Wear OS Companion app.
+ * @constant {number} MAX_PENDING_SESSIONS
+ * Maximum number of concurrent pending authentication sessions kept in memory.
+ */
+const MAX_PENDING_SESSIONS = 3;
+
+/**
+ * @constant {number} RATE_LIMIT_AUTH_START_MAX
+ * Maximum allowed invocations of startAuth within the sliding window.
+ */
+const RATE_LIMIT_AUTH_START_MAX = 5;
+
+/**
+ * @constant {number} RATE_LIMIT_AUTH_START_WINDOW_MS
+ * Duration of the sliding rate limiting window for startAuth (5 minutes in milliseconds).
+ */
+const RATE_LIMIT_AUTH_START_WINDOW_MS = 5 * 60 * 1000;
+
+/**
+ * @constant {number} RATE_LIMIT_AUTH_REFRESH_MAX
+ * Maximum allowed invocations of refreshAuth within the sliding window.
+ */
+const RATE_LIMIT_AUTH_REFRESH_MAX = 10;
+
+/**
+ * @constant {number} RATE_LIMIT_AUTH_REFRESH_WINDOW_MS
+ * Duration of the sliding rate limiting window for refreshAuth (5 minutes in milliseconds).
+ */
+const RATE_LIMIT_AUTH_REFRESH_WINDOW_MS = 5 * 60 * 1000;
+
+/**
+ * Main application class for the Homey Wear OS by Google app.
  *
  * This app acts as an OAuth2 relay and dashboard provider between the HomeyWatch
  * Wear OS smartwatch application and the Athom Cloud. It exposes public HTTP API endpoints
@@ -44,12 +74,28 @@ class HomeyWearOsCompanionApp extends Homey.App {
   _sessions = new Map();
 
   /**
+   * Map of sliding window timestamps for rate limiting keyed by action name.
+   *
+   * @private
+   * @type {Map<string, number[]>}
+   */
+  _rateLimits = new Map();
+
+  /**
    * Diagnostic log manager instance.
    *
    * @private
    * @type {LogManager|null}
    */
   _logManager = null;
+
+  /**
+   * Internal guard preventing recursive logging during log mirroring.
+   *
+   * @private
+   * @type {boolean}
+   */
+  _isLoggingInternal = false;
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -63,10 +109,11 @@ class HomeyWearOsCompanionApp extends Homey.App {
     this._logManager = new LogManager(this);
     await this._logManager.init();
 
-    this.log(`[${TAG}:onInit] Homey Wear OS Companion App initialized.`);
+    this.log(`[${TAG}:onInit] Homey Wear OS by Google App initialized.`);
 
     const isDebug = this.isDebugLoggingEnabled();
     this.log(`[${TAG}:onInit] Debug logging is ${isDebug ? 'ENABLED' : 'DISABLED'}.`);
+    this.log(`[${TAG}:onInit] Security hardening active: max_pending_sessions=${MAX_PENDING_SESSIONS}, rate_limit_start=${RATE_LIMIT_AUTH_START_MAX}/5m, rate_limit_refresh=${RATE_LIMIT_AUTH_REFRESH_MAX}/5m, rbac_verification=ENABLED.`);
 
     this.homey.settings.on('set', async (key) => {
       if (key === 'debug_logging_enabled') {
@@ -94,13 +141,26 @@ class HomeyWearOsCompanionApp extends Homey.App {
    * const { authUrl } = await homey.app.startAuthSession('a1b2c3...');
    */
   async startAuthSession(sessionId) {
+    // 1. Enforce sliding window rate limit (max 5 requests per 5 minutes)
+    this._checkRateLimit('auth_start', RATE_LIMIT_AUTH_START_MAX, RATE_LIMIT_AUTH_START_WINDOW_MS);
+
     if (!sessionId || typeof sessionId !== 'string') {
-      throw new Error('Missing or invalid sessionId.');
+      throw Object.assign(new Error('Missing or invalid sessionId.'), { statusCode: 400 });
     }
 
+    // 2. Invalidate any pre-existing session for this ID
     this._destroySession(sessionId);
 
-    this.log(`[${TAG}:startAuthSession] Creating OAuth2 callback for session ${sessionId.substring(0, 8)}...`);
+    // 3. Enforce memory pool cap: prune oldest pending session if pool is full
+    if (this._sessions.size >= MAX_PENDING_SESSIONS) {
+      const oldestSessionId = this._sessions.keys().next().value;
+      if (oldestSessionId) {
+        this.log(`[${TAG}:startAuthSession] Session pool cap reached (${MAX_PENDING_SESSIONS}). Pruning oldest session ${oldestSessionId.substring(0, 8)}...`);
+        this._destroySession(oldestSessionId);
+      }
+    }
+
+    this.log(`[${TAG}:startAuthSession] Creating OAuth2 callback for session ${sessionId.substring(0, 8)}... (active pool: ${this._sessions.size}/${MAX_PENDING_SESSIONS})`);
 
     const clientId = Homey.env.CLIENT_ID;
     const scopes = [
@@ -109,9 +169,8 @@ class HomeyWearOsCompanionApp extends Homey.App {
       'homey.device.control',
       'homey.flow.readonly',
       'homey.flow.start',
-      'homey.user.readonly',
-      'homey.user.self',
       'homey.app.readonly',
+      'homey.user.self',
     ].join(' ');
 
     const baseAuthUrl = `https://api.athom.com/oauth2/authorise`
@@ -128,7 +187,7 @@ class HomeyWearOsCompanionApp extends Homey.App {
 
             const timer = setTimeout(() => {
               this.log(`[${TAG}:startAuthSession] Session ${sessionId.substring(0, 8)}... expired.`);
-              this._sessions.delete(sessionId);
+              this._destroySession(sessionId);
             }, SESSION_TTL_MS);
 
             this._sessions.set(sessionId, {
@@ -136,6 +195,7 @@ class HomeyWearOsCompanionApp extends Homey.App {
               status: 'pending',
               token: null,
               timer,
+              oauthCallback,
             });
 
             resolve({ authUrl });
@@ -148,6 +208,7 @@ class HomeyWearOsCompanionApp extends Homey.App {
         })
         .catch((err) => {
           this.error(`[${TAG}:startAuthSession] Failed to create OAuth2 callback:`, err.message);
+          this._destroySession(sessionId);
           reject(err);
         });
     });
@@ -179,47 +240,69 @@ class HomeyWearOsCompanionApp extends Homey.App {
   }
 
   /**
-   * Refreshes the hub session token using the stored refresh token.
+   * Refreshes the OAuth access token using the Athom Cloud OAuth2 refresh_token.
+   *
+   * Enforces sliding window rate limiting (max 10 requests per 5 minutes).
+   * Verifies the token by exchanging it with Athom Cloud. When Athom returns a new token pair,
+   * re-verifies that the user still has membership access to this hub before delivering the refreshed tokens.
    *
    * @public
-   * @param {string} athomRefreshToken - The Athom OAuth2 refresh token.
-   * @returns {Promise<{session_token: string, athom_refresh_token: string}>}
-   * @throws {Error} If token refresh fails.
+   * @param {string} athomRefreshToken - The Athom OAuth2 refresh token (mandatory).
+   * @returns {Promise<{session_token: string, athom_refresh_token: string}>} The refreshed tokens.
+   * @throws {Error} If rate limit is exceeded (HTTP 429), token is invalid/expired (HTTP 401),
+   *                 user is not authorized on hub (HTTP 403), or token exchange fails.
+   * @example
+   * const tokens = await homey.app.refreshAuthSession('eyJhbGciOi...');
    */
   async refreshAuthSession(athomRefreshToken) {
+    // 1. Enforce sliding window rate limit (max 10 requests per 5 minutes)
+    this._checkRateLimit('auth_refresh', RATE_LIMIT_AUTH_REFRESH_MAX, RATE_LIMIT_AUTH_REFRESH_WINDOW_MS);
+
     if (!athomRefreshToken || typeof athomRefreshToken !== 'string') {
-      throw new Error('Missing or invalid athom_refresh_token.');
+      throw Object.assign(new Error('Missing or invalid athom_refresh_token.'), { statusCode: 400 });
     }
 
-    this.log(`[${TAG}:refreshAuthSession] Refreshing session with Athom Cloud...`);
+    try {
+      this.log(`[${TAG}:refreshAuthSession] Refreshing session with Athom Cloud...`);
 
-    const body = new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: athomRefreshToken,
-      client_id: Homey.env.CLIENT_ID,
-      client_secret: Homey.env.CLIENT_SECRET,
-    });
+      const body = new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: athomRefreshToken,
+        client_id: Homey.env.CLIENT_ID,
+        client_secret: Homey.env.CLIENT_SECRET,
+      });
 
-    const response = await fetch(ATHOM_TOKEN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString(),
-    });
+      const response = await fetch(ATHOM_TOKEN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
 
-    if (!response.ok) {
-      const text = await response.text();
-      this.error(`[${TAG}:refreshAuthSession] Token refresh failed HTTP ${response.status}:`, text);
-      throw new Error(`Token refresh failed with HTTP ${response.status}`);
+      if (!response.ok) {
+        const text = await response.text();
+        this.error(`[${TAG}:refreshAuthSession] Athom refresh_token exchange failed. Status: ${response.status}`, text);
+        throw Object.assign(new Error('Invalid or expired athom_refresh_token.'), { statusCode: 401 });
+      }
+
+      // We successfully got a new OAuth token pair from Athom
+      const newAthomTokens = await response.json();
+      this.log(`[${TAG}:refreshAuthSession] Token successfully refreshed from Athom Cloud.`);
+
+      // 2. Re-verify that user still has active membership permissions for this hub
+      this.log(`[${TAG}:refreshAuthSession] Re-verifying hub membership permissions for refreshed token...`);
+      await this._verifyHubMembership(newAthomTokens.access_token);
+      this.log(`[${TAG}:refreshAuthSession] Hub membership check passed for token refresh.`);
+
+      const sessionToken = await this.homey.api.getOwnerApiToken();
+      return {
+        session_token: sessionToken,
+        athom_refresh_token: newAthomTokens.refresh_token,
+      };
+    } catch (err) {
+      if (err.statusCode && err.statusCode < 500) throw err;
+      this.error(`[${TAG}:refreshAuthSession] Failed to refresh auth session:`, err.message || err);
+      throw Object.assign(new Error('Internal error during token refresh.'), { statusCode: 500 });
     }
-
-    const token = await response.json();
-    this.log(`[${TAG}:refreshAuthSession] Token successfully refreshed from Athom Cloud.`);
-
-    const sessionToken = await this.homey.api.getOwnerApiToken();
-    return {
-      session_token: sessionToken,
-      athom_refresh_token: token.refresh_token,
-    };
   }
 
   /**
@@ -229,7 +312,7 @@ class HomeyWearOsCompanionApp extends Homey.App {
    * @returns {boolean}
    */
   isDebugLoggingEnabled() {
-    return this.homey.settings.get('debug_logging_enabled') === true;
+    return Boolean(this.homey?.settings?.get('debug_logging_enabled'));
   }
 
   /**
@@ -240,6 +323,120 @@ class HomeyWearOsCompanionApp extends Homey.App {
    */
   getLogManager() {
     return this._logManager;
+  }
+
+  /**
+   * Overrides {@link Homey.App#log} to print to standard console (stdout) and mirror sanitized
+   * messages to the persistent LogManager diagnostic file when debug logging is active.
+   *
+   * @public
+   * @param {...any} args - Log messages or objects to output.
+   * @returns {void}
+   * @example
+   * this.log('[Auth:start] Initializing pairing session');
+   */
+  log(...args) {
+    super.log(...args);
+    if (this._isLoggingInternal) return;
+    if (this._logManager && this._logManager.isDebugEnabled()) {
+      try {
+        this._isLoggingInternal = true;
+        const sanitizedArgs = args.map(arg => this._sanitizeLogPayload(arg));
+        const formatted = sanitizedArgs.map(arg => {
+          if (arg === null || arg === undefined) return String(arg);
+          if (typeof arg === 'object') {
+            try { return JSON.stringify(arg); } catch (e) { return String(arg); }
+          }
+          return String(arg);
+        }).join(' ');
+
+        const match = formatted.match(/^\[([a-zA-Z0-9_\-:]+)\]\s*(.*)$/s);
+        const tag = match ? match[1] : TAG;
+        const message = match ? match[2] : formatted;
+
+        this._logManager.writeLog('INFO', tag, message);
+      } catch (err) {
+        // Ignored to prevent runtime interruption during logging
+      } finally {
+        this._isLoggingInternal = false;
+      }
+    }
+  }
+
+  /**
+   * Overrides {@link Homey.App#error} to print to standard error console (stderr) and mirror sanitized
+   * error messages to the persistent LogManager diagnostic file.
+   *
+   * @public
+   * @param {...any} args - Error messages, Error instances, or objects to output.
+   * @returns {void}
+   * @example
+   * this.error('[Auth:exchange] Code exchange failed:', error.message);
+   */
+  error(...args) {
+    super.error(...args);
+    if (this._isLoggingInternal) return;
+    if (this._logManager) {
+      try {
+        this._isLoggingInternal = true;
+        const sanitizedArgs = args.map(arg => this._sanitizeLogPayload(arg));
+        const formatted = sanitizedArgs.map(arg => {
+          if (arg === null || arg === undefined) return String(arg);
+          if (arg instanceof Error) {
+            return `${arg.message || ''}${arg.stack ? `\n${arg.stack}` : ''}`;
+          }
+          if (typeof arg === 'object') {
+            try { return JSON.stringify(arg); } catch (e) { return String(arg); }
+          }
+          return String(arg);
+        }).join(' ');
+
+        const match = formatted.match(/^\[([a-zA-Z0-9_\-:]+)\]\s*(.*)$/s);
+        const tag = match ? match[1] : TAG;
+        const message = match ? match[2] : formatted;
+
+        this._logManager.writeLog('ERROR', tag, message);
+      } catch (err) {
+        // Ignored to prevent runtime interruption during logging
+      } finally {
+        this._isLoggingInternal = false;
+      }
+    }
+  }
+
+  /**
+   * Emits a structured debug log message if debug logging is enabled in settings.
+   * Adheres strictly to the logging system guidelines:
+   * - Format: [ClassName:methodName] message
+   * - English language only
+   * - Automatic sanitization of sensitive PII, credentials, and coordinates
+   * - Prohibition of emoticons and non-textual symbols
+   *
+   * @public
+   * @param {string} tag - Context identifier, e.g. 'ClassName:methodName'.
+   * @param {...any} args - Log message or objects to output.
+   * @returns {void}
+   * @example
+   * this.debugLog('api:getDevices', 'Filtering device:', device.name);
+   */
+  debugLog(tag, ...args) {
+    if (!this.isDebugLoggingEnabled()) return;
+    const sanitizedArgs = args.map(arg => this._sanitizeLogPayload(arg));
+    super.log(`[DEBUG] [${tag}]`, ...sanitizedArgs);
+    if (this._logManager) {
+      const formattedMessage = sanitizedArgs.map(arg => {
+        if (arg === null || arg === undefined) return String(arg);
+        if (typeof arg === 'object') {
+          try {
+            return JSON.stringify(arg);
+          } catch (e) {
+            return String(arg);
+          }
+        }
+        return String(arg);
+      }).join(' ');
+      this._logManager.writeLog('DEBUG', tag, formattedMessage);
+    }
   }
 
   // ── Private Methods ────────────────────────────────────────────────────────
@@ -282,15 +479,10 @@ class HomeyWearOsCompanionApp extends Homey.App {
       const token = await response.json();
       this.log(`[${TAG}:_exchangeCode] Token exchange successful for session ${sessionId.substring(0, 8)}...`);
 
-      let userResponse = null;
-      try {
-        const uRes = await fetch('https://api.athom.com/user/me', {
-          headers: { Authorization: `Bearer ${token.access_token}` }
-        });
-        if (uRes.ok) userResponse = await uRes.json();
-      } catch (uErr) {
-        this.error(`[${TAG}:_exchangeCode] Failed to fetch user profile:`, uErr.message);
-      }
+      // 1. Verify user profile and hub membership against Athom Cloud
+      this.log(`[${TAG}:_exchangeCode] Verifying hub membership with Athom Cloud for session ${sessionId.substring(0, 8)}...`);
+      const userResponse = await this._verifyHubMembership(token.access_token);
+      this.log(`[${TAG}:_exchangeCode] Hub membership check passed for session ${sessionId.substring(0, 8)}...`);
 
       let sessionToken = null;
       let homeyId = null;
@@ -308,10 +500,10 @@ class HomeyWearOsCompanionApp extends Homey.App {
           });
           if (nameRes.ok) {
             const nameData = await nameRes.json();
-            if (typeof nameData === 'string' && nameData) {
-              localHomeyName = nameData;
-            } else if (nameData && nameData.name) {
-              localHomeyName = nameData.name;
+            if (typeof nameData === 'string' && nameData.trim()) {
+              localHomeyName = nameData.trim();
+            } else if (nameData && typeof nameData.name === 'string') {
+              localHomeyName = nameData.name.trim();
             }
           }
         } catch (nameErr) {
@@ -333,28 +525,222 @@ class HomeyWearOsCompanionApp extends Homey.App {
           id: userResponse.id || userResponse._id || userResponse.athomId || 'unknown',
           name: userResponse.name || 'Homey User',
           email: userResponse.email || null,
+          role: userResponse.localRole || null,
         } : null,
       };
 
       this.log(`[${TAG}:_exchangeCode] Session ${sessionId.substring(0, 8)}... marked complete.`);
     } catch (err) {
-      this.error(`[${TAG}:_exchangeCode] Token exchange error:`, err.message);
+      this.error(`[${TAG}:_exchangeCode] Token exchange error:`, err.message || err);
       session.status = 'error';
     }
   }
 
   /**
-   * Destroys an active session and clears its timer.
+   * Destroys an active session, clears its timeout, and removes all EventEmitter listeners.
    *
    * @private
    * @param {string} sessionId - The session identifier to remove.
+   * @returns {void}
+   * @example
+   * this._destroySession('a1b2c3d4...');
    */
   _destroySession(sessionId) {
     const session = this._sessions.get(sessionId);
     if (session) {
-      if (session.timer) clearTimeout(session.timer);
+      if (session.timer) {
+        clearTimeout(session.timer);
+      }
+      if (session.oauthCallback && typeof session.oauthCallback.removeAllListeners === 'function') {
+        try {
+          session.oauthCallback.removeAllListeners();
+        } catch (err) {
+          this.error(`[${TAG}:_destroySession] Failed to remove listeners from oauthCallback:`, err.message || err);
+        }
+      }
       this._sessions.delete(sessionId);
+      this.log(`[${TAG}:_destroySession] Session ${sessionId.substring(0, 8)}... destroyed and cleaned up from pool.`);
     }
+  }
+
+  /**
+   * Enforces a sliding window in-memory rate limit for sensitive public operations.
+   *
+   * Prunes expired timestamps older than `windowMs` and verifies that the total
+   * request count within the active window does not exceed `maxRequests`.
+   * If the limit is exceeded, logs a security error and throws an HTTP 429 exception.
+   *
+   * @private
+   * @param {string} actionKey - Unique key identifying the operation being rate-limited (mandatory).
+   * @param {number} maxRequests - Maximum number of requests permitted within the time window (mandatory).
+   * @param {number} windowMs - Duration of the sliding time window in milliseconds (mandatory).
+   * @returns {void}
+   * @throws {Error} If request frequency exceeds maxRequests within windowMs (HTTP 429).
+   * @example
+   * this._checkRateLimit('auth_start', 5, 300000);
+   */
+  _checkRateLimit(actionKey, maxRequests, windowMs) {
+    const now = Date.now();
+    const timestamps = this._rateLimits.get(actionKey) || [];
+    const validTimestamps = timestamps.filter(ts => (now - ts) < windowMs);
+
+    if (validTimestamps.length >= maxRequests) {
+      this.error(`[${TAG}:_checkRateLimit] Security rejection: Rate limit exceeded for action '${actionKey}' (${validTimestamps.length}/${maxRequests} in ${windowMs}ms).`);
+      throw Object.assign(new Error(`Rate limit exceeded for ${actionKey}. Please try again later.`), { statusCode: 429 });
+    }
+
+    validTimestamps.push(now);
+    this._rateLimits.set(actionKey, validTimestamps);
+    this.debugLog(`${TAG}:_checkRateLimit`, `Rate limit check passed for action '${actionKey}' (${validTimestamps.length}/${maxRequests} in ${windowMs}ms).`);
+  }
+
+  /**
+   * Verifies that the authenticated Athom user is registered on this local Homey Pro hub
+   * and holds an authorized role (`owner`, `manager`, or `user` / resident).
+   *
+   * Flow:
+   * 1. Queries Athom Cloud (`GET https://api.athom.com/user/me`) to authenticate the Bearer token
+   *    and extract the verified Athom account identifier (`userId`).
+   * 2. Queries the local Homey Pro User Manager (`GET /api/manager/users/user`) using the owner token
+   *    to verify that `userId` matches a registered local user's `athomId` or `id`.
+   * 3. Inspects the local user's `enabled` status and `role`, explicitly rejecting disabled accounts
+   *    and `guest` users with HTTP 403 Forbidden.
+   *
+   * @private
+   * @async
+   * @param {string} accessToken - The Athom Cloud OAuth2 access token (mandatory).
+   * @returns {Promise<object>} The Athom user profile object enriched with `localRole`.
+   * @throws {Error} If accessToken is missing (HTTP 400), user profile fetch fails (HTTP 401),
+   *                 or if the user is not registered, disabled, or has a `guest` role (HTTP 403).
+   * @example
+   * const userProfile = await this._verifyHubMembership(token.access_token);
+   */
+  async _verifyHubMembership(accessToken) {
+    if (!accessToken || typeof accessToken !== 'string') {
+      throw Object.assign(new Error('Missing or invalid accessToken.'), { statusCode: 400 });
+    }
+
+    this.log(`[${TAG}:_verifyHubMembership] Authenticating user token with Athom Cloud...`);
+
+    const response = await fetch('https://api.athom.com/user/me', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      this.error(`[${TAG}:_verifyHubMembership] Failed to fetch Athom user profile. Status: ${response.status}`, errorText);
+      throw Object.assign(new Error('Failed to retrieve Athom user profile.'), { statusCode: 401 });
+    }
+
+    const userProfile = await response.json();
+    const currentHomeyId = await this.homey.cloud.getHomeyId();
+
+    const maskId = id => (typeof id === 'string' && id.length > 8 ? `${id.substring(0, 4)}***${id.slice(-4)}` : '***');
+    const maskedHomeyId = maskId(currentHomeyId);
+
+    const userId = userProfile.id
+      || userProfile._id
+      || userProfile.athomId
+      || (userProfile.user && (userProfile.user.id || userProfile.user._id || userProfile.user.athomId))
+      || null;
+
+    if (!userId) {
+      this.error(`[${TAG}:_verifyHubMembership] Security rejection: Could not extract user ID from Athom profile.`);
+      throw Object.assign(new Error('Invalid Athom user profile.'), { statusCode: 401 });
+    }
+
+    const maskedUserId = maskId(userId);
+
+    // Query Local Homey Pro User Registry
+    let usersList = [];
+    try {
+      const localUrl = await this.homey.api.getLocalUrl();
+      const ownerToken = await this.homey.api.getOwnerApiToken();
+      const usersResponse = await fetch(`${localUrl}/api/manager/users/user`, {
+        headers: { Authorization: `Bearer ${ownerToken}` },
+      });
+
+      if (!usersResponse.ok) {
+        this.error(`[${TAG}:_verifyHubMembership] Local users API responded with HTTP ${usersResponse.status}.`);
+        throw new Error(`Local users API failed with status ${usersResponse.status}`);
+      }
+
+      const usersData = await usersResponse.json();
+      usersList = Array.isArray(usersData) ? usersData : Object.values(usersData || {});
+    } catch (localErr) {
+      this.error(`[${TAG}:_verifyHubMembership] Failed to query local users registry:`, localErr.message || localErr);
+      throw Object.assign(new Error('Failed to verify local hub users registry.'), { statusCode: 500 });
+    }
+
+    const matchedLocalUser = usersList.find(u => u && (
+      (u.athomId && u.athomId === userId) ||
+      (u.id && u.id === userId) ||
+      (u._id && u._id === userId)
+    ));
+
+    if (!matchedLocalUser) {
+      this.error(`[${TAG}:_verifyHubMembership] Security rejection: Authenticated user '${maskedUserId}' is not registered on hub '${maskedHomeyId}' (localUsersCount=${usersList.length}). Access denied.`);
+      throw Object.assign(new Error('User is not authorized on this Homey hub.'), { statusCode: 403 });
+    }
+
+    const userRole = typeof matchedLocalUser.role === 'string' ? matchedLocalUser.role.toLowerCase() : 'unknown';
+    const isEnabled = matchedLocalUser.enabled !== false;
+    const isPresent = Boolean(matchedLocalUser.present);
+    const isAsleep = Boolean(matchedLocalUser.asleep);
+    const localUserKeys = Object.keys(matchedLocalUser).join(', ');
+
+    this.log(`[${TAG}:_verifyHubMembership] Local user found on hub '${maskedHomeyId}': user='${maskedUserId}', role='${userRole}', enabled=${isEnabled}, present=${isPresent}, asleep=${isAsleep}, keys=[${localUserKeys}]`);
+
+    if (!isEnabled) {
+      this.error(`[${TAG}:_verifyHubMembership] Security rejection: User '${maskedUserId}' is disabled on hub '${maskedHomeyId}'. Access denied.`);
+      throw Object.assign(new Error('User account is disabled on this Homey hub.'), { statusCode: 403 });
+    }
+
+    if (userRole === 'guest') {
+      this.error(`[${TAG}:_verifyHubMembership] Security rejection: User '${maskedUserId}' has role 'guest' on hub '${maskedHomeyId}'. Guest accounts are not permitted. Access denied.`);
+      throw Object.assign(new Error('Guest users are not authorized to access this Homey hub.'), { statusCode: 403 });
+    }
+
+    this.log(`[${TAG}:_verifyHubMembership] Security check passed: User '${maskedUserId}' (role='${userRole}') is authorized for hub '${maskedHomeyId}'.`);
+
+    userProfile.localRole = userRole;
+    return userProfile;
+  }
+
+  /**
+   * Sanitizes a log payload by masking sensitive tokens, passwords, emails, and GPS coordinates.
+   * Delegates string masking to {@link LogManager.sanitize}.
+   *
+   * @private
+   * @param {any} payload - Data payload to sanitize.
+   * @returns {any} Sanitized payload safe for logging.
+   * @example
+   * const safeObj = this._sanitizeLogPayload({ token: 'abc', lat: 45.1 });
+   */
+  _sanitizeLogPayload(payload) {
+    if (payload === null || payload === undefined) return payload;
+    if (payload instanceof Error) {
+      const sanitizedMessage = LogManager.sanitize(payload.message || '');
+      const sanitizedStack = payload.stack ? LogManager.sanitize(payload.stack) : undefined;
+      const cleanError = new Error(sanitizedMessage);
+      if (sanitizedStack) cleanError.stack = sanitizedStack;
+      if (payload.code) cleanError.code = payload.code;
+      if (payload.statusCode) cleanError.statusCode = payload.statusCode;
+      return cleanError;
+    }
+    if (typeof payload === 'string') {
+      return LogManager.sanitize(payload);
+    }
+    if (typeof payload === 'object') {
+      try {
+        const str = JSON.stringify(payload);
+        const sanitizedStr = LogManager.sanitize(str);
+        return JSON.parse(sanitizedStr);
+      } catch (err) {
+        return '[Complex Object]';
+      }
+    }
+    return payload;
   }
 }
 

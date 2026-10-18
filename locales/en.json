@@ -1,5 +1,5 @@
 {
-  "app_name": "Wear OS Companion",
+  "app_name": "Wear OS by Google",
   "app_description": "Companion app for HomeyWatch on Wear OS — manages authentication and watch quick actions.",
   "auth_session_started": "Authentication session started.",
   "auth_session_not_found": "Authentication session not found or expired.",
@@ -12,8 +12,8 @@
   "settings": {
     "menu": {
       "title": "Wear OS Settings",
-      "home_config_title": "Watch Quick Devices",
-      "home_config_desc": "Select up to 4 lights, locks, or doors for quick control and Wear OS Tiles.",
+      "home_config_title": "Widget Configuration",
+      "home_config_desc": "Choose up to 4 devices to display in the smartwatch widget (Tile), customizing their quick action and short label.",
       "debug_title": "Debug & Diagnostics",
       "debug_desc": "Manage debug logging and diagnostic options."
     },
@@ -37,14 +37,14 @@
       "msg_cleared": "All log files cleared successfully."
     },
     "home_config": {
-      "title": "Watch Quick Devices",
-      "subtitle": "Select up to 4 devices for your 2x2 Quick Actions Tile. If none are selected, your Favorite devices will be shown.",
+      "title": "Widget Configuration",
+      "subtitle": "Configure the 4 devices for the 2x2 quick action widget (Tile) on Wear OS. Customize the primary action and display name for each device. If none are selected, the widget falls back to your first 4 Favorites.",
       "search_placeholder": "Search device",
       "max_reached": "You have reached the maximum limit of 4 devices.",
       "loading": "Loading devices...",
-      "no_devices": "No lights or locks found.",
-      "quick_action": "Action",
-      "tile_label": "Name",
+      "no_devices": "No compatible devices found.",
+      "quick_action": "Quick action",
+      "tile_label": "Widget label",
       "tile_label_placeholder": "Default name"
     },
     "common": {

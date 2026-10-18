@@ -446,20 +446,21 @@
       </header>
 
       <div class="menu-list-container">
-        <!-- Submenu 1: Watch Quick Devices -->
+        <!-- Submenu 1: Widget Configuration -->
         <div id="nav_home_config" class="menu-item" role="button" tabindex="0">
           <div class="menu-item-content">
             <div class="menu-item-icon">
-              <!-- Smartwatch Icon -->
+              <!-- 2x2 Widget Grid Icon -->
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="6" y="7" width="12" height="10" rx="3"></rect>
-                <path d="M9 7V3h6v4"></path>
-                <path d="M9 17v4h6v-4"></path>
+                <rect x="3" y="3" width="7" height="7" rx="1.5"></rect>
+                <rect x="14" y="3" width="7" height="7" rx="1.5"></rect>
+                <rect x="14" y="14" width="7" height="7" rx="1.5"></rect>
+                <rect x="3" y="14" width="7" height="7" rx="1.5"></rect>
               </svg>
             </div>
             <div class="menu-item-text">
-              <span class="menu-item-title" data-i18n="settings.menu.home_config_title">Watch Quick Devices</span>
-              <span class="menu-item-subtitle" data-i18n="settings.menu.home_config_desc">Select up to 4 lights, locks, or doors for quick control and Wear OS Tiles.</span>
+              <span class="menu-item-title" data-i18n="settings.menu.home_config_title">Widget Configuration</span>
+              <span class="menu-item-subtitle" data-i18n="settings.menu.home_config_desc">Choose up to 4 devices to display in the smartwatch widget (Tile), customizing their quick action and short label.</span>
             </div>
           </div>
           <div class="menu-item-arrow">›</div>
@@ -485,7 +486,7 @@
       </div>
     </div>
 
-    <!-- VIEW 1: WATCH QUICK DEVICES SELECTOR -->
+    <!-- VIEW 1: WIDGET CONFIGURATION (TILE 2x2) -->
     <div id="view-selector" class="view">
       <div class="menu-item back-item back-btn" role="button" tabindex="0">
         <div class="menu-item-arrow">‹</div>
@@ -495,10 +496,10 @@
       </div>
 
       <header class="homey-header" style="margin-bottom: 6px;">
-        <h1 class="homey-title" data-i18n="settings.home_config.title">Watch Quick Devices</h1>
+        <h1 class="homey-title" data-i18n="settings.home_config.title">Widget Configuration</h1>
       </header>
       <div class="subtitle" data-i18n="settings.home_config.subtitle">
-        Select up to 4 devices for your 2x2 Quick Actions Tile. If none are selected, your Favorite devices will be shown.
+        Configure the 4 devices for the 2x2 quick action widget (Tile) on Wear OS. Customize the primary action and display name for each device. If none are selected, the widget falls back to your first 4 Favorites.
       </div>
 
       <div class="search-container">
@@ -624,6 +625,23 @@
         toast.classList.add(type);
         toast.classList.add('show');
         setTimeout(() => toast.classList.remove('show'), 3000);
+      }
+
+      /**
+       * Escapes HTML special characters to prevent DOM XSS injection.
+       *
+       * @private
+       * @param {any} unsafe - Input value to escape.
+       * @returns {string} HTML-escaped string.
+       */
+      function _escapeHtml(unsafe) {
+        if (unsafe === null || unsafe === undefined) return '';
+        return String(unsafe)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#039;');
       }
 
       /**
@@ -764,7 +782,7 @@
           const zonePathName = _buildZonePath(zoneId);
           const zoneDiv = document.createElement('div');
           zoneDiv.className = 'zone-group';
-          zoneDiv.innerHTML = '<div class="zone-title">' + zonePathName + '</div>';
+          zoneDiv.innerHTML = '<div class="zone-title">' + _escapeHtml(zonePathName) + '</div>';
 
           // Sort devices in this zone by zoneSortIndex then by name
           const devicesInZone = grouped[zoneId];
@@ -788,8 +806,8 @@
 
               const labelRowHtml = `
                 <div class="device-qa-row">
-                  <span class="device-qa-label">${Homey.__('settings.home_config.tile_label')}:</span>
-                  <input type="text" class="device-qa-input" id="lbl_${device.id}" value="${currentLabel}" placeholder="${device.name}">
+                  <span class="device-qa-label">${_escapeHtml(Homey.__('settings.home_config.tile_label'))}:</span>
+                  <input type="text" class="device-qa-input" id="lbl_${_escapeHtml(device.id)}" value="${_escapeHtml(currentLabel)}" placeholder="${_escapeHtml(device.name)}">
                 </div>
               `;
 
@@ -798,13 +816,13 @@
                 const currentCap = selectedWatchDeviceCapabilities[device.id] || device.selectedQuickAction || device.quickActions[0].id;
                 const optionsHtml = device.quickActions.map(qa => {
                   const selectedAttr = qa.id === currentCap ? ' selected' : '';
-                  return `<option value="${qa.id}"${selectedAttr}>${qa.title} (${qa.id})</option>`;
+                  return `<option value="${_escapeHtml(qa.id)}"${selectedAttr}>${_escapeHtml(qa.title)} (${_escapeHtml(qa.id)})</option>`;
                 }).join('');
 
                 qaSelectHtml = `
                   <div class="device-qa-row">
-                    <span class="device-qa-label">${Homey.__('settings.home_config.quick_action')}:</span>
-                    <select class="device-qa-select" id="qa_${device.id}">
+                    <span class="device-qa-label">${_escapeHtml(Homey.__('settings.home_config.quick_action'))}:</span>
+                    <select class="device-qa-select" id="qa_${_escapeHtml(device.id)}">
                       ${optionsHtml}
                     </select>
                   </div>
@@ -815,10 +833,10 @@
             }
 
             item.innerHTML = `
-              <input type="checkbox" id="chk_${device.id}" ${isChecked ? 'checked' : ''} ${!isChecked && selectedWatchDeviceIds.length >= MAX_WATCH_DEVICES ? 'disabled' : ''}>
+              <input type="checkbox" id="chk_${_escapeHtml(device.id)}" ${isChecked ? 'checked' : ''} ${!isChecked && selectedWatchDeviceIds.length >= MAX_WATCH_DEVICES ? 'disabled' : ''}>
               <div class="device-info">
-                <div class="device-name">${device.name}</div>
-                <div class="device-class">${device.class}</div>
+                <div class="device-name">${_escapeHtml(device.name)}</div>
+                <div class="device-class">${_escapeHtml(device.class)}</div>
                 ${customOptionsHtml}
               </div>
             `;
@@ -969,15 +987,15 @@
 
           card.innerHTML = `
             <div class="log-file-info">
-              <div class="log-file-title">${file.name}</div>
-              <div class="log-file-meta"><span>${file.sizeFormatted}</span> &bull; <span>${formattedDate}</span></div>
+              <div class="log-file-title">${_escapeHtml(file.name)}</div>
+              <div class="log-file-meta"><span>${_escapeHtml(file.sizeFormatted)}</span> &bull; <span>${_escapeHtml(formattedDate)}</span></div>
             </div>
             <div class="log-file-actions">
-              <button type="button" class="homey-button-secondary btn-download-file" data-index="${file.index}" style="font-size: 12px; padding: 4px 10px; margin: 0;">
-                ${Homey.__('settings.debug.btn_download')}
+              <button type="button" class="homey-button-secondary btn-download-file" data-index="${_escapeHtml(file.index)}" style="font-size: 12px; padding: 4px 10px; margin: 0;">
+                ${_escapeHtml(Homey.__('settings.debug.btn_download'))}
               </button>
-              <button type="button" class="homey-button-secondary btn-delete-file" data-index="${file.index}" style="font-size: 12px; padding: 4px 10px; margin: 0; color: #dc3545;">
-                ${Homey.__('settings.debug.btn_delete')}
+              <button type="button" class="homey-button-secondary btn-delete-file" data-index="${_escapeHtml(file.index)}" style="font-size: 12px; padding: 4px 10px; margin: 0; color: #dc3545;">
+                ${_escapeHtml(Homey.__('settings.debug.btn_delete'))}
               </button>
             </div>
           `;

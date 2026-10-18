@@ -5,8 +5,11 @@ const fs = require('fs');
 /** @constant {number} MAX_LOG_BACKUPS - Number of rotated log backup files. */
 const MAX_LOG_BACKUPS = 2;
 
+/** @constant {RegExp} SESSION_ID_REGEX - Strict validation pattern for Wear OS session IDs (64 hexadecimal characters). */
+const SESSION_ID_REGEX = /^[0-9a-fA-F]{64}$/;
+
 /**
- * API route handlers for the Homey Wear OS Companion app.
+ * API route handlers for the Homey Wear OS by Google app.
  *
  * @module api
  */
@@ -14,60 +17,75 @@ const MAX_LOG_BACKUPS = 2;
 /**
  * Handles `POST /auth/start`.
  *
+ * Validates the incoming payload, delegates to `app.startAuthSession()` and returns
+ * the authorization URL to be displayed as a QR code or interactive notification.
+ *
  * @public
- * @param {object} args
+ * @param {object} args - Request arguments provided by Homey runtime.
  * @param {import('homey').Homey} args.homey - Homey instance.
  * @param {object} args.body - Request body.
  * @param {string} args.body.sessionId - 64-char hex session identifier.
  * @returns {Promise<{authUrl: string}>}
+ * @throws {Error} If sessionId is missing, invalid, or rate limits are exceeded (HTTP 400 or 429).
  */
 async function startAuth({ homey, body }) {
   const { sessionId } = body ?? {};
 
-  if (!sessionId || typeof sessionId !== 'string' || sessionId.length < 16) {
-    throw Object.assign(new Error('Missing or invalid sessionId.'), { statusCode: 400 });
+  if (!sessionId || typeof sessionId !== 'string' || !SESSION_ID_REGEX.test(sessionId.trim())) {
+    homey.app.error('[api:startAuth] Security rejection: Invalid or missing sessionId format. Expected 64 hex characters.');
+    throw Object.assign(new Error('Missing or invalid sessionId. Must be a 64-character hexadecimal string.'), { statusCode: 400 });
   }
 
-  return homey.app.startAuthSession(sessionId);
+  return homey.app.startAuthSession(sessionId.trim());
 }
 
 /**
  * Handles `GET /auth/poll`.
  *
+ * Returns the current status of an auth session.
+ *
  * @public
- * @param {object} args
+ * @param {object} args - Request arguments provided by Homey runtime.
  * @param {import('homey').Homey} args.homey - Homey instance.
  * @param {object} args.query - Request query parameters.
- * @param {string} args.query.session - Session identifier.
+ * @param {string} args.query.session - 64-char hex session identifier.
  * @returns {{ status: string, token?: object }}
+ * @throws {Error} If session query parameter is missing or does not match 64 hex characters (HTTP 400).
  */
 function pollAuth({ homey, query }) {
   const sessionId = query?.session;
 
-  if (!sessionId || typeof sessionId !== 'string') {
-    throw Object.assign(new Error('Missing required query parameter: session.'), { statusCode: 400 });
+  if (!sessionId || typeof sessionId !== 'string' || !SESSION_ID_REGEX.test(sessionId.trim())) {
+    homey.app.error('[api:pollAuth] Security rejection: Invalid or missing session query parameter. Expected 64 hex characters.');
+    throw Object.assign(new Error('Missing or invalid required query parameter: session. Must be a 64-character hexadecimal string.'), { statusCode: 400 });
   }
 
-  return homey.app.pollAuthSession(sessionId);
+  return homey.app.pollAuthSession(sessionId.trim());
 }
 
 /**
  * Handles `POST /auth/refresh`.
  *
+ * Verifies the provided athom_refresh_token by querying Athom Cloud.
+ * If valid, generates a new owner API token and returns it along with the new refresh token.
+ *
  * @public
- * @param {object} args
+ * @param {object} args - Request arguments provided by Homey runtime.
  * @param {import('homey').Homey} args.homey - Homey instance.
  * @param {object} args.body - Request body.
+ * @param {string} args.body.athom_refresh_token - The Athom Cloud OAuth2 refresh token (mandatory).
  * @returns {Promise<{session_token: string, athom_refresh_token: string}>}
+ * @throws {Error} If athom_refresh_token is missing, invalid, or rate limits are exceeded (HTTP 400 or 429).
  */
 async function refreshAuth({ homey, body }) {
   const athomRefreshToken = body?.athom_refresh_token;
 
-  if (!athomRefreshToken || typeof athomRefreshToken !== 'string') {
+  if (!athomRefreshToken || typeof athomRefreshToken !== 'string' || athomRefreshToken.trim().length === 0 || athomRefreshToken.length > 2048) {
+    homey.app.error('[api:refreshAuth] Security rejection: Missing or invalid athom_refresh_token parameter.');
     throw Object.assign(new Error('Missing or invalid athom_refresh_token.'), { statusCode: 400 });
   }
 
-  return homey.app.refreshAuthSession(athomRefreshToken);
+  return homey.app.refreshAuthSession(athomRefreshToken.trim());
 }
 
 /**
@@ -451,69 +469,129 @@ async function getLogStatus({ homey }) {
 /**
  * Handles `GET /log/download/:index`.
  *
+ * Constructs and returns the direct local URL to download a diagnostic log file.
+ *
  * @public
- * @param {object} args
- * @returns {Promise<string>}
+ * @param {object} args - Request arguments.
+ * @param {import('homey').Homey} args.homey - Homey app instance.
+ * @param {object} args.params - URL route parameters.
+ * @param {string} args.params.index - File index to download.
+ * @returns {Promise<string>} Direct download URL.
+ * @throws {Error} If index is invalid or file does not exist (HTTP 400 or 404).
  */
 async function getLogDownloadFile({ homey, params }) {
-  const index = parseInt(params.index, 10);
-  if (isNaN(index) || index < 0 || index > MAX_LOG_BACKUPS) {
-    throw Object.assign(new Error('Invalid file index'), { statusCode: 400 });
+  try {
+    if (!params || typeof params.index === 'undefined' || !/^\d+$/.test(String(params.index))) {
+      homey.app.error('[api:getLogDownloadFile] Security rejection: Invalid file index format.');
+      throw Object.assign(new Error('Invalid file index. Expected an integer.'), { statusCode: 400 });
+    }
+
+    const index = parseInt(params.index, 10);
+    if (index < 0 || index > MAX_LOG_BACKUPS) {
+      homey.app.error(`[api:getLogDownloadFile] Security rejection: File index ${index} out of range (0-${MAX_LOG_BACKUPS}).`);
+      throw Object.assign(new Error(`File index out of range (0-${MAX_LOG_BACKUPS}).`), { statusCode: 400 });
+    }
+
+    const logManager = homey.app.getLogManager ? homey.app.getLogManager() : null;
+    if (!logManager) {
+      throw Object.assign(new Error('LogManager is not initialized.'), { statusCode: 500 });
+    }
+
+    const filePath = logManager.getLogFilePath(index);
+    const fileName = _getLogFileName(index);
+
+    if (!fs.existsSync(filePath)) {
+      throw Object.assign(new Error(`Log file not found: ${fileName}`), { statusCode: 404 });
+    }
+
+    const appId = homey.manifest ? homey.manifest.id : homey.app.id;
+    const localAddress = await homey.cloud.getLocalAddress();
+    const downloadUrl = `http://${localAddress}/app/${appId}/userdata/${fileName}`;
+
+    homey.app.log(`[api:getLogDownloadFile] Generated download URL for ${fileName}`);
+    return downloadUrl;
+  } catch (error) {
+    homey.app.error('[api:getLogDownloadFile] Error:', error.message || error);
+    throw error;
   }
-
-  const logManager = homey.app.getLogManager();
-  const filePath = logManager.getLogFilePath(index);
-  const fileName = _getLogFileName(index);
-
-  if (!fs.existsSync(filePath)) {
-    throw Object.assign(new Error(`Log file not found: ${fileName}`), { statusCode: 404 });
-  }
-
-  const appId = homey.manifest ? homey.manifest.id : homey.app.id;
-  const localAddress = await homey.cloud.getLocalAddress();
-  return `http://${localAddress}/app/${appId}/userdata/${fileName}`;
 }
 
 /**
  * Handles `DELETE /log/:index`.
  *
+ * Deletes a specific log file by rotation index.
+ *
  * @public
- * @param {object} args
- * @returns {Promise<object>}
+ * @param {object} args - Request arguments.
+ * @param {import('homey').Homey} args.homey - Homey app instance.
+ * @param {object} args.params - URL route parameters.
+ * @param {string} args.params.index - File index to delete.
+ * @returns {Promise<object>} Result object.
+ * @throws {Error} If index is invalid (HTTP 400).
  */
 async function deleteLogFile({ homey, params }) {
-  if (params && params.index === 'all') {
-    return deleteAllLogs({ homey });
+  try {
+    if (params && params.index === 'all') {
+      return deleteAllLogs({ homey });
+    }
+
+    if (!params || typeof params.index === 'undefined' || !/^\d+$/.test(String(params.index))) {
+      homey.app.error('[api:deleteLogFile] Security rejection: Invalid file index format.');
+      throw Object.assign(new Error('Invalid file index. Expected an integer or "all".'), { statusCode: 400 });
+    }
+
+    const index = parseInt(params.index, 10);
+    if (index < 0 || index > MAX_LOG_BACKUPS) {
+      homey.app.error(`[api:deleteLogFile] Security rejection: File index ${index} out of range (0-${MAX_LOG_BACKUPS}).`);
+      throw Object.assign(new Error(`File index out of range (0-${MAX_LOG_BACKUPS}).`), { statusCode: 400 });
+    }
+
+    const logManager = homey.app.getLogManager ? homey.app.getLogManager() : null;
+    if (!logManager) {
+      throw Object.assign(new Error('LogManager is not initialized.'), { statusCode: 500 });
+    }
+
+    const filePath = logManager.getLogFilePath(index);
+    const fileName = _getLogFileName(index);
+
+    if (index === 0) logManager.clearWriteQueue();
+    if (fs.existsSync(filePath)) {
+      await fs.promises.unlink(filePath).catch(() => {});
+    }
+
+    homey.app.log(`[api:deleteLogFile] Deleted log file: ${fileName}`);
+    return { success: true, deletedFile: fileName };
+  } catch (error) {
+    homey.app.error('[api:deleteLogFile] Error:', error.message || error);
+    const statusCode = error.statusCode || 500;
+    throw Object.assign(new Error(error.message || 'Failed to delete log file.'), { statusCode });
   }
-
-  const index = parseInt(params.index, 10);
-  if (isNaN(index) || index < 0 || index > MAX_LOG_BACKUPS) {
-    throw Object.assign(new Error('Invalid file index'), { statusCode: 400 });
-  }
-
-  const logManager = homey.app.getLogManager();
-  const filePath = logManager.getLogFilePath(index);
-  const fileName = _getLogFileName(index);
-
-  if (index === 0) logManager.clearWriteQueue();
-  if (fs.existsSync(filePath)) {
-    await fs.promises.unlink(filePath).catch(() => {});
-  }
-
-  return { success: true, deletedFile: fileName };
 }
 
 /**
  * Handles `DELETE /log/all`.
  *
+ * Clears and deletes all stored diagnostic log files.
+ *
  * @public
- * @param {object} args
- * @returns {Promise<object>}
+ * @param {object} args - Request arguments.
+ * @param {import('homey').Homey} args.homey - Homey app instance.
+ * @returns {Promise<object>} Result object.
  */
 async function deleteAllLogs({ homey }) {
-  const logManager = homey.app.getLogManager();
-  await logManager.clearLogs();
-  return { success: true };
+  try {
+    const logManager = homey.app.getLogManager ? homey.app.getLogManager() : null;
+    if (!logManager) {
+      throw Object.assign(new Error('LogManager is not initialized.'), { statusCode: 500 });
+    }
+    await logManager.clearLogs();
+    homey.app.log('[api:deleteAllLogs] All diagnostic log files cleared.');
+    return { success: true };
+  } catch (error) {
+    homey.app.error('[api:deleteAllLogs] Error:', error.message || error);
+    const statusCode = error.statusCode || 500;
+    throw Object.assign(new Error(error.message || 'Failed to clear all logs.'), { statusCode });
+  }
 }
 
 module.exports = {

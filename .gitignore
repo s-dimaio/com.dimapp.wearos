@@ -11,4 +11,5 @@ env.json
 release.ps1
 scratch/
 /images
-
+/log
+log/

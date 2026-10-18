@@ -1,12 +1,12 @@
 {
   "name": "com.dimapp.wearos",
-  "version": "1.0.0",
-  "description": "Wear OS Companion app for Homey",
+  "version": "1.0.1",
+  "description": "Wear OS companion app for Homey Pro",
   "main": "app.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "author": "Simone Di Maio <simone.dimaio77@gmail.com>",
+  "author": "Simone Di Maio <simone.dimaio.it@gmail.com>",
   "license": "GPL-3.0",
   "dependencies": {}
 }

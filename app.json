@@ -1,7 +1,7 @@
 {
   "_comment": "This file is generated. Please edit .homeycompose/app.json instead.",
   "id": "com.dimapp.wearos",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "compatibility": ">=12.0.0",
   "sdk": 3,
   "brandColor": "#4285F4",
@@ -10,7 +10,7 @@
   ],
   "name": {
     "en": "Wear OS by Google",
-    "it": "Wear OS Companion"
+    "it": "Wear OS by Google"
   },
   "description": {
     "en": "Connect your Wear OS smartwatch to Homey.",
