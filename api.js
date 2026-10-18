@@ -8,6 +8,9 @@ const MAX_LOG_BACKUPS = 2;
 /** @constant {RegExp} SESSION_ID_REGEX - Strict validation pattern for Wear OS session IDs (64 hexadecimal characters). */
 const SESSION_ID_REGEX = /^[0-9a-fA-F]{64}$/;
 
+/** @constant {RegExp} UUID_REGEX - Validation pattern for standard UUID v4 strings. */
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * API route handlers for the Homey Wear OS by Google app.
  *
@@ -594,6 +597,58 @@ async function deleteAllLogs({ homey }) {
   }
 }
 
+/**
+ * Handles `POST /flow/trigger`.
+ *
+ * Triggers a standard or advanced flow via the companion HomeyScript proxy.
+ *
+ * @public
+ * @param {object} args - Request arguments.
+ * @param {import('homey').Homey} args.homey - Homey instance.
+ * @param {object} args.body - Request body.
+ * @param {string} args.body.id - Flow UUID to trigger.
+ * @param {boolean} [args.body.isAdvanced=false] - Whether the flow is an Advanced Flow.
+ * @param {object} [args.body.args] - Optional arguments to pass to the flow.
+ * @returns {Promise<{success: boolean, message: string}>}
+ * @throws {Error} If id is missing or invalid (HTTP 400), or if execution fails.
+ */
+async function triggerFlow({ homey, body }) {
+  const { id, isAdvanced, args } = body ?? {};
+
+  if (!id || typeof id !== 'string') {
+    homey.app.error('[api:triggerFlow] Security rejection: Missing or non-string flow ID parameter.');
+    throw Object.assign(new Error('Missing or invalid required parameter: id.'), { statusCode: 400 });
+  }
+
+  const trimmedId = id.trim();
+  if (!UUID_REGEX.test(trimmedId)) {
+    homey.app.error(`[api:triggerFlow] Security rejection: Flow ID '${trimmedId}' does not match standard UUID format.`);
+    throw Object.assign(new Error('Invalid flowId format. Expected standard UUID format (8-4-4-4-12 hex).'), { statusCode: 400 });
+  }
+
+  if (args !== undefined && args !== null) {
+    if (typeof args !== 'object' || Array.isArray(args)) {
+      homey.app.error('[api:triggerFlow] Security rejection: args parameter must be a valid JSON object.');
+      throw Object.assign(new Error('Invalid args parameter. Expected a JSON object.'), { statusCode: 400 });
+    }
+  }
+
+  const safeIsAdvanced = isAdvanced === true;
+  homey.app.log(`[api:triggerFlow] Flow ID validation passed for '${trimmedId}' (isAdvanced=${safeIsAdvanced}). Delegating to app...`);
+
+  try {
+    const result = await homey.app.triggerFlow(trimmedId, safeIsAdvanced, args ?? {});
+    return result;
+  } catch (err) {
+    homey.app.error(`[api:triggerFlow] Failed to trigger flow '${trimmedId}':`, err.message || err);
+    const statusCode = err.statusCode || (err.code === 'HOMEYSCRIPT_NOT_INSTALLED' ? 404 : 500);
+    throw Object.assign(new Error(err.message || 'Failed to trigger flow.'), {
+      statusCode,
+      code: err.code || 'FLOW_TRIGGER_FAILED',
+    });
+  }
+}
+
 module.exports = {
   startAuth,
   pollAuth,
@@ -605,4 +660,5 @@ module.exports = {
   getLogDownloadFile,
   deleteLogFile,
   deleteAllLogs,
+  triggerFlow,
 };

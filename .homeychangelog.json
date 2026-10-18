@@ -6,5 +6,9 @@
   "1.0.1": {
     "en": "Initial release of Wear OS by Google for Athom Homey Pro.",
     "it": "Rilascio iniziale di Wear OS By Google per Athom Homey Pro."
+  },
+  "1.0.2": {
+    "en": "(i) Added support for triggering Standard and Advanced Flows from Wear OS devices; \n(ii) Added an interactive User Guide and setup instructions in the app settings.",
+    "it": "(i) Aggiunto il supporto all'avvio di Flow Standard e Avanzati dai dispositivi Wear OS; \n(ii) Aggiunta la Guida Utente interattiva e le istruzioni di configurazione nelle impostazioni dell'app."
   }
 }

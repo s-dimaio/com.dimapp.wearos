@@ -21,3 +21,5 @@ scratch/
 test/
 /test/
 test_*.js
+.agents/
+/.agents

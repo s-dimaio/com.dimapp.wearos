@@ -97,6 +97,14 @@ class HomeyWearOsCompanionApp extends Homey.App {
    */
   _isLoggingInternal = false;
 
+  /**
+   * Cached identifier of the dedicated HomeyScript proxy script.
+   *
+   * @private
+   * @type {string|null}
+   */
+  _homeyScriptProxyId = null;
+
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   /**
@@ -705,6 +713,168 @@ class HomeyWearOsCompanionApp extends Homey.App {
 
     userProfile.localRole = userRole;
     return userProfile;
+  }
+
+  /**
+   * Ensures the existence of the HomeyScript execution proxy script.
+   *
+   * Verifies if HomeyScript (`com.athom.homeyscript`) is installed on the Homey hub.
+   * If the dedicated `WearOS-FlowTrigger` script is missing, creates it automatically.
+   *
+   * @private
+   * @returns {Promise<{scriptId: string}>} The script identifier to execute.
+   * @throws {Error} If HomeyScript is not installed or script proxy creation fails.
+   */
+  async _ensureHomeyScriptProxy() {
+    if (this._homeyScriptProxyId) {
+      return { scriptId: this._homeyScriptProxyId };
+    }
+
+    const localUrl = await this.homey.api.getLocalUrl();
+    const ownerToken = await this.homey.api.getOwnerApiToken();
+
+    try {
+      const response = await fetch(`${localUrl}/api/app/com.athom.homeyscript/script`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${ownerToken}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          const err = new Error('HomeyScript app is not installed on Homey Pro.');
+          err.code = 'HOMEYSCRIPT_NOT_INSTALLED';
+          err.statusCode = 404;
+          throw err;
+        }
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const scripts = await response.json();
+      const existing = Object.values(scripts).find(s => s && s.name === 'WearOS-FlowTrigger');
+      if (existing) {
+        this._homeyScriptProxyId = existing.id;
+        this.log(`[${TAG}:_ensureHomeyScriptProxy] Found existing HomeyScript proxy script: ${this._homeyScriptProxyId}`);
+        return { scriptId: this._homeyScriptProxyId };
+      }
+    } catch (err) {
+      if (err.code === 'HOMEYSCRIPT_NOT_INSTALLED') throw err;
+      this.log(`[${TAG}:_ensureHomeyScriptProxy] Could not list existing scripts, will attempt creation: ${err.message}`);
+    }
+
+    try {
+      const createResponse = await fetch(`${localUrl}/api/app/com.athom.homeyscript/script`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${ownerToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: 'WearOS-FlowTrigger',
+          code: '// Flow trigger proxy for Wear OS Companion App\n// Managed by com.dimapp.wearos\n',
+        }),
+      });
+
+      if (!createResponse.ok) {
+        if (createResponse.status === 404) {
+          const err = new Error('HomeyScript app is not installed on Homey Pro.');
+          err.code = 'HOMEYSCRIPT_NOT_INSTALLED';
+          err.statusCode = 404;
+          throw err;
+        }
+        throw new Error(`HTTP ${createResponse.status}: ${createResponse.statusText}`);
+      }
+
+      const newScript = await createResponse.json();
+      this._homeyScriptProxyId = newScript.id;
+      this.log(`[${TAG}:_ensureHomeyScriptProxy] Created HomeyScript proxy script: ${this._homeyScriptProxyId}`);
+      return { scriptId: this._homeyScriptProxyId };
+    } catch (err) {
+      if (err.code === 'HOMEYSCRIPT_NOT_INSTALLED') throw err;
+      throw new Error(`Failed to create HomeyScript proxy script: ${err.message}`);
+    }
+  }
+
+  /**
+   * Executes arbitrary JavaScript snippet inside the privileged HomeyScript runtime.
+   *
+   * @private
+   * @param {string} code - The JavaScript snippet to run inside HomeyScript.
+   * @returns {Promise<any>} The return value from HomeyScript execution.
+   * @throws {Error} If HomeyScript is not installed or script execution fails.
+   */
+  async _executeHomeyScript(code) {
+    const { scriptId } = await this._ensureHomeyScriptProxy();
+    const localUrl = await this.homey.api.getLocalUrl();
+    const ownerToken = await this.homey.api.getOwnerApiToken();
+
+    const response = await fetch(`${localUrl}/api/app/com.athom.homeyscript/script/${scriptId}/run`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${ownerToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ code }),
+    });
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        const err = new Error('HomeyScript app is not installed on Homey Pro.');
+        err.code = 'HOMEYSCRIPT_NOT_INSTALLED';
+        err.statusCode = 404;
+        throw err;
+      }
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const result = await response.json();
+    if (!result.success) {
+      const errorMsg = result.returns?.message || result.error || 'HomeyScript execution failed';
+      throw new Error(errorMsg);
+    }
+    return result.returns;
+  }
+
+  /**
+   * Triggers a standard or advanced Homey flow via the privileged HomeyScript proxy.
+   *
+   * Validates that flowId is a valid UUID format, enforces boolean isAdvanced parameter,
+   * serializes arguments safely via JSON.stringify, and avoids any string interpolation
+   * vulnerabilities inside HomeyScript code generation.
+   *
+   * @public
+   * @param {string} flowId - The UUID of the target Flow.
+   * @param {boolean} [isAdvanced=false] - Whether the target flow is an Advanced Flow.
+   * @param {object} [args={}] - Optional arguments to pass to the flow.
+   * @returns {Promise<{success: boolean, message: string}>} Result of the operation.
+   * @throws {Error} If the flow UUID is invalid or execution fails.
+   * @example
+   * await homey.app.triggerFlow('123e4567-e89b-12d3-a456-426614174000', true);
+   */
+  async triggerFlow(flowId, isAdvanced = false, args = {}) {
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const trimmedId = typeof flowId === 'string' ? flowId.trim() : '';
+
+    if (!trimmedId || !UUID_REGEX.test(trimmedId)) {
+      this.error(`[${TAG}:triggerFlow] Security rejection: Invalid flowId '${trimmedId}'. Standard UUID format required.`);
+      throw Object.assign(new Error('Missing or invalid flowId parameter. Must be a valid UUID.'), { statusCode: 400 });
+    }
+
+    const safeIsAdvanced = isAdvanced === true;
+    const method = safeIsAdvanced ? 'triggerAdvancedFlow' : 'triggerFlow';
+
+    // Safely encode parameters using JSON.stringify to completely prevent script injection
+    const safeId = JSON.stringify(trimmedId);
+    const safeArgs = args && typeof args === 'object' && !Array.isArray(args) ? JSON.stringify(args) : 'null';
+    const code = `await Homey.flow.${method}({ id: ${safeId} }, ${safeArgs});`;
+
+    this.log(`[${TAG}:triggerFlow] Validation passed for flow '${trimmedId}'. Executing method '${method}' via HomeyScript proxy...`);
+    await this._executeHomeyScript(code);
+    this.log(`[${TAG}:triggerFlow] Flow '${trimmedId}' triggered successfully.`);
+
+    return { success: true, message: 'Flow triggered successfully.' };
   }
 
   /**

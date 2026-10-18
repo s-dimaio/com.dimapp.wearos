@@ -13,3 +13,5 @@ scratch/
 /images
 /log
 log/
+.agents/
+/.agents

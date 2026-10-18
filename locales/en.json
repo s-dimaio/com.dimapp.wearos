@@ -15,7 +15,9 @@
       "home_config_title": "Widget Configuration",
       "home_config_desc": "Choose up to 4 devices to display in the smartwatch widget (Tile), customizing their quick action and short label.",
       "debug_title": "Debug & Diagnostics",
-      "debug_desc": "Manage debug logging and diagnostic options."
+      "debug_desc": "Manage debug logging and diagnostic options.",
+      "guide_title": "User Guide",
+      "guide_desc": "Information about app architecture, initial pairing setup, and system requirements."
     },
     "debug": {
       "title": "Debug & Diagnostics",
@@ -46,6 +48,27 @@
       "quick_action": "Quick action",
       "tile_label": "Widget label",
       "tile_label_placeholder": "Default name"
+    },
+    "guide": {
+      "title": "User Guide",
+      "subtitle": "Information about app architecture, initial pairing setup, and system requirements.",
+      "companion_title": "Wear OS by Google Companion App",
+      "companion_desc": "This Homey application acts as a companion for the standalone HomeyWatch app installed on your Wear OS smartwatch. It securely connects your smart home to your watch, synchronizes your 2x2 widget preferences, and enables fast control of devices and automations directly from your wrist.",
+      "store_desc": "You can download the primary watch app for Wear OS directly from the built-in Google Play Store on your smartwatch:",
+      "store_btn_sub": "GET IT ON",
+      "store_btn_main": "Google Play",
+      "login_title": "Initial Login & Pairing Procedure",
+      "login_step1_title": "Launch HomeyWatch on your smartwatch",
+      "login_step1_desc": "When launching the watch app, a pairing request will be initiated.",
+      "login_step2_title": "Scan the QR code with your smartphone",
+      "login_step2_desc": "A unique QR code will appear on your watch display: scan it with your phone camera to open the authorization page.",
+      "login_step3_title": "Complete login on your smartphone",
+      "login_step3_desc": "Sign in with your Athom account and authorize the requested access permissions.",
+      "login_step4_title": "Automatic sync on Wear OS",
+      "login_step4_desc": "Once finished on your smartphone, the watch app will finalize pairing within seconds and automatically load your devices, widgets, and favorites.",
+      "requirements_title": "Requirements & Important Notes",
+      "platform_alert": "This application is natively designed for smartwatches running Wear OS 3+ (Google Pixel Watch, Samsung Galaxy Watch, etc.) and operates independently on the wrist.",
+      "flows_desc": "To trigger and run your Advanced Flows and Standard Flows from your smartwatch, the official HomeyScript app must be installed and active on your Homey Pro."
     },
     "common": {
       "save": "Save",
