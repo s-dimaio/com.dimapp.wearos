@@ -2,15 +2,15 @@
 
 [![Homey Apps SDK v3](https://img.shields.io/badge/Homey%20SDK-v3-00B0FF.svg)](https://apps.developer.homey.app/)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
-[![Companion: HomeyWatch](https://img.shields.io/badge/Companion%20App-HomeyWatch%20(Wear%20OS)-4285F4.svg)](https://github.com/s-dimaio/HomeyWatch)
+[![Companion: Homey](https://img.shields.io/badge/Companion%20App-Homey%20(Wear%20OS)-4285F4.svg)](https://github.com/s-dimaio/HomeyWatch)
 
-The official **Athom Homey Pro** companion application for **Wear OS**. It acts as a secure OAuth2 relay, virtual dashboard provider, and local API gateway for the standalone [HomeyWatch](https://github.com/s-dimaio/HomeyWatch) smartwatch application.
+The official **Athom Homey Pro** companion application for **Wear OS**. It acts as a secure OAuth2 relay, virtual dashboard provider, and local API gateway for the standalone [Homey](https://github.com/s-dimaio/HomeyWatch) smartwatch application.
 
 ---
 
 ## 🌟 Overview
 
-The **Wear OS by Google** app bridges your Athom Homey Pro smart home ecosystem with your Wear OS 3+ smartwatch. By decoupling client orchestration from a paired smartphone, this companion app allows [HomeyWatch](https://github.com/s-dimaio/HomeyWatch) to operate completely standalone:
+The **Wear OS by Google** app bridges your Athom Homey Pro smart home ecosystem with your Wear OS 3+ smartwatch. By decoupling client orchestration from a paired smartphone, this companion app allows [Homey](https://github.com/s-dimaio/HomeyWatch) to operate completely standalone:
 - Bootstraps secure OAuth2 authorization directly on the watch or through a smartphone handoff.
 - Generates tailored "Virtual Dashboards" optimized for Wear OS 2x2 Glanceable Tiles and favorite device chips.
 - Exposes filtered device and zone proxies with automated quick-action heuristic candidate ranking.
@@ -25,14 +25,14 @@ The integration consists of two decoupled repositories:
 1. **Homey Companion App** (*this repository*):
    - Runs directly on Athom Homey Pro (SDK v3, Node.js).
    - Manages authorization sessions, Athom Cloud token delegation, dashboard preferences, and diagnostic file logging.
-2. **Wear OS Client App ([HomeyWatch](https://github.com/s-dimaio/HomeyWatch))**:
+2. **Wear OS Client App ([Homey](https://github.com/s-dimaio/HomeyWatch))**:
    - Native Kotlin & Jetpack Compose application running independently on Wear OS 3+ (`minSdk 30`).
    - Uses mDNS (`_homey._tcp`) for zero-configuration local discovery, rotary input, hardware-backed Keystore encryption (`EncryptedSharedPreferences`), and Glanceable ProtoLayout Tiles.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Watch as HomeyWatch (Wear OS)
+    participant Watch as Homey (Wear OS)
     participant Companion as Homey Companion (com.dimapp.wearos)
     participant Phone as Paired Smartphone
     participant Athom as Athom Cloud & Web API
@@ -158,7 +158,7 @@ npx homey app validate --level publish
 
 ## 📦 Related Projects
 
-- **[HomeyWatch (Wear OS Client)](https://github.com/s-dimaio/HomeyWatch)**: Standalone native Android application for Wear OS 3+ built with Jetpack Compose, Horologist, and ProtoLayout Tiles.
+- **[Homey for Wear OS (Android Client)](https://github.com/s-dimaio/HomeyWatch)**: Standalone native Android application for Wear OS 3+ built with Jetpack Compose, Horologist, and ProtoLayout Tiles.
 
 ---
 

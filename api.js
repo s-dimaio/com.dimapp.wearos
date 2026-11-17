@@ -8,9 +8,6 @@ const MAX_LOG_BACKUPS = 2;
 /** @constant {RegExp} SESSION_ID_REGEX - Strict validation pattern for Wear OS session IDs (64 hexadecimal characters). */
 const SESSION_ID_REGEX = /^[0-9a-fA-F]{64}$/;
 
-/** @constant {RegExp} UUID_REGEX - Validation pattern for standard UUID v4 strings. */
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /**
  * API route handlers for the Homey Wear OS by Google app.
  *
@@ -94,22 +91,36 @@ async function refreshAuth({ homey, body }) {
 /**
  * Handles `GET /dashboards`.
  *
- * Returns a virtual dashboard containing the quick access devices selected
- * by the user in the Wear OS settings page (stored under `wearos_devices_ids`).
+ * Enforces session token authorization and returns a virtual dashboard containing
+ * the quick access devices selected by the user in the Wear OS settings page
+ * (stored under `wearos_devices_ids`).
  *
  * @public
- * @param {object} args
- * @param {import('homey').Homey} args.homey - Homey instance.
- * @returns {Promise<object>}
+ * @async
+ * @param {object} args - Request arguments provided by Homey Web API.
+ * @param {import('homey').Homey} args.homey - The Homey application instance.
+ * @returns {Promise<object>} The virtual dashboard object.
+ * @throws {Error} If the request is unauthenticated or unauthorized (HTTP 401).
+ * @example
+ * // GET /api/app/com.dimapp.wearos/dashboards?token=<sessionToken>
  */
-async function getDashboards({ homey }) {
+async function getDashboards(args) {
+  const { homey } = args;
+  await homey.app.requireValidSessionToken(args);
   homey.app.log('[api:getDashboards] Wear OS dashboard request received');
 
-  const selectedIds = homey.settings.get('wearos_devices_ids') || [];
+  let selectedIds = homey.settings.get('wearos_devices_ids') || [];
+  if (typeof homey.app.pruneDeletedDevices === 'function') {
+    selectedIds = await homey.app.pruneDeletedDevices().catch((err) => {
+      homey.app.error('[api:getDashboards] Failed to prune deleted devices:', err.message);
+      return homey.settings.get('wearos_devices_ids') || [];
+    });
+  }
+
   const configuredCapabilities = homey.settings.get('wearos_device_capabilities') || {};
   const configuredNames = homey.settings.get('wearos_device_names') || {};
 
-  if (selectedIds.length === 0) {
+  if (!Array.isArray(selectedIds) || selectedIds.length === 0) {
     homey.app.log('[api:getDashboards] No devices selected in settings, returning empty virtual dashboard');
     return {};
   }
@@ -139,7 +150,7 @@ async function getDashboards({ homey }) {
   const response = {};
   response[virtualDashboardId] = dashboard;
 
-  homey.app.log(`[api:getDashboards] Returning 1 virtual dashboard with ${selectedIds.length} devices.`);
+  homey.app.log(`[api:getDashboards] Returning 1 virtual dashboard with ${finalIds.length} devices.`);
   return response;
 }
 
@@ -169,6 +180,13 @@ async function getDevices({ homey }) {
   }
 
   const devices = await response.json();
+
+  if (typeof homey.app.pruneDeletedDevices === 'function') {
+    await homey.app.pruneDeletedDevices(devices).catch((err) => {
+      homey.app.error('[api:getDevices] Failed to prune deleted devices:', err.message);
+    });
+  }
+
   const configuredCapabilities = homey.settings.get('wearos_device_capabilities') || {};
 
   const excludedIds = new Set();
@@ -324,15 +342,16 @@ function _extractQuickActions(device, homey = null) {
         capId === 'button' ||
         capId.startsWith('button.');
 
-      // Determine human-readable title
+      // Determine human-readable title respecting active Homey language
       const titleObj = cap.title || cap.options?.title || device.capabilitiesOptions?.[capId]?.title;
+      const lang = typeof homey?.i18n?.getLanguage === 'function' ? homey.i18n.getLanguage() : 'en';
       let title = '';
       if (typeof titleObj === 'object' && titleObj !== null) {
-        title = titleObj.it || titleObj.en || Object.values(titleObj)[0] || capId;
+        title = titleObj[lang] || titleObj.en || titleObj.it || Object.values(titleObj)[0] || capId;
       } else if (typeof titleObj === 'string' && titleObj.trim().length > 0) {
         title = titleObj.trim();
       } else {
-        title = _getDefaultCapabilityTitle(capId);
+        title = _getDefaultCapabilityTitle(capId, homey);
       }
 
       actions.push({
@@ -347,7 +366,7 @@ function _extractQuickActions(device, homey = null) {
   if (actions.length === 0 && capsObj.target_temperature && capsObj.target_temperature.setable !== false) {
     actions.push({
       id: 'target_temperature',
-      title: 'Temperatura (Target)',
+      title: _getDefaultCapabilityTitle('target_temperature', homey),
       type: 'number',
     });
   }
@@ -389,34 +408,56 @@ function _extractQuickActions(device, homey = null) {
 }
 
 /**
- * Returns a human-friendly fallback title for standard capability IDs.
+ * Returns a localized human-friendly fallback title for standard capability IDs.
  *
  * @private
- * @param {string} capId
- * @returns {string}
+ * @param {string} capId - Capability identifier (mandatory).
+ * @param {import('homey').Homey|null} [homey=null] - Homey instance for resolving i18n keys.
+ * @returns {string} Localized capability title.
+ * @example
+ * const title = _getDefaultCapabilityTitle('locked', homey);
  */
-function _getDefaultCapabilityTitle(capId) {
+function _getDefaultCapabilityTitle(capId, homey = null) {
+  const translate = (key, tokens, fallback) => (
+    typeof homey?.__ === 'function' ? homey.__(key, tokens) : fallback
+  );
+
   switch (capId) {
-    case 'onoff': return 'On / Off';
-    case 'locked': return 'Serratura (Chiudi)';
-    case 'garagedoor_closed': return 'Garage / Cancello';
-    case 'windowcoverings_closed': return 'Tapparelle / Tende';
-    case 'windowcoverings_state': return 'Su / Giù';
-    case 'button': return 'Pulsante';
+    case 'onoff':
+      return translate('capabilities.onoff', null, 'On / Off');
+    case 'locked':
+      return translate('capabilities.locked', null, 'Lock');
+    case 'garagedoor_closed':
+      return translate('capabilities.garagedoor_closed', null, 'Garage / Gate');
+    case 'windowcoverings_closed':
+      return translate('capabilities.windowcoverings_closed', null, 'Blinds / Curtains');
+    case 'windowcoverings_state':
+      return translate('capabilities.windowcoverings_state', null, 'Up / Down');
+    case 'button':
+      return translate('capabilities.button', null, 'Button');
     case 'unlatch':
-    case 'button.unlatch': return 'Apri serratura';
+    case 'button.unlatch':
+      return translate('capabilities.unlatch', null, 'Unlatch');
     case 'open':
-    case 'button.open': return 'Apri';
-    case 'target_temperature': return 'Temperatura Target';
+    case 'button.open':
+      return translate('capabilities.open', null, 'Open');
+    case 'target_temperature':
+      return translate('capabilities.target_temperature', null, 'Target Temperature');
     default: {
-      if (capId.startsWith('onoff.')) return `On / Off (${capId.replace('onoff.', '')})`;
+      if (capId.startsWith('onoff.')) {
+        const sub = capId.replace('onoff.', '');
+        return translate('capabilities.onoff_named', { sub }, `On / Off (${sub})`);
+      }
       if (capId.startsWith('button.')) {
         const sub = capId.replace('button.', '');
-        if (sub === 'unlatch') return 'Apri serratura';
-        if (sub === 'open') return 'Apri';
-        return `Pulsante (${sub})`;
+        if (sub === 'unlatch') return translate('capabilities.unlatch', null, 'Unlatch');
+        if (sub === 'open') return translate('capabilities.open', null, 'Open');
+        return translate('capabilities.button_named', { sub }, `Button (${sub})`);
       }
-      if (capId.startsWith('locked.')) return `Serratura (${capId.replace('locked.', '')})`;
+      if (capId.startsWith('locked.')) {
+        const sub = capId.replace('locked.', '');
+        return translate('capabilities.locked_named', { sub }, `Lock (${sub})`);
+      }
       return capId;
     }
   }
@@ -597,58 +638,6 @@ async function deleteAllLogs({ homey }) {
   }
 }
 
-/**
- * Handles `POST /flow/trigger`.
- *
- * Triggers a standard or advanced flow via the companion HomeyScript proxy.
- *
- * @public
- * @param {object} args - Request arguments.
- * @param {import('homey').Homey} args.homey - Homey instance.
- * @param {object} args.body - Request body.
- * @param {string} args.body.id - Flow UUID to trigger.
- * @param {boolean} [args.body.isAdvanced=false] - Whether the flow is an Advanced Flow.
- * @param {object} [args.body.args] - Optional arguments to pass to the flow.
- * @returns {Promise<{success: boolean, message: string}>}
- * @throws {Error} If id is missing or invalid (HTTP 400), or if execution fails.
- */
-async function triggerFlow({ homey, body }) {
-  const { id, isAdvanced, args } = body ?? {};
-
-  if (!id || typeof id !== 'string') {
-    homey.app.error('[api:triggerFlow] Security rejection: Missing or non-string flow ID parameter.');
-    throw Object.assign(new Error('Missing or invalid required parameter: id.'), { statusCode: 400 });
-  }
-
-  const trimmedId = id.trim();
-  if (!UUID_REGEX.test(trimmedId)) {
-    homey.app.error(`[api:triggerFlow] Security rejection: Flow ID '${trimmedId}' does not match standard UUID format.`);
-    throw Object.assign(new Error('Invalid flowId format. Expected standard UUID format (8-4-4-4-12 hex).'), { statusCode: 400 });
-  }
-
-  if (args !== undefined && args !== null) {
-    if (typeof args !== 'object' || Array.isArray(args)) {
-      homey.app.error('[api:triggerFlow] Security rejection: args parameter must be a valid JSON object.');
-      throw Object.assign(new Error('Invalid args parameter. Expected a JSON object.'), { statusCode: 400 });
-    }
-  }
-
-  const safeIsAdvanced = isAdvanced === true;
-  homey.app.log(`[api:triggerFlow] Flow ID validation passed for '${trimmedId}' (isAdvanced=${safeIsAdvanced}). Delegating to app...`);
-
-  try {
-    const result = await homey.app.triggerFlow(trimmedId, safeIsAdvanced, args ?? {});
-    return result;
-  } catch (err) {
-    homey.app.error(`[api:triggerFlow] Failed to trigger flow '${trimmedId}':`, err.message || err);
-    const statusCode = err.statusCode || (err.code === 'HOMEYSCRIPT_NOT_INSTALLED' ? 404 : 500);
-    throw Object.assign(new Error(err.message || 'Failed to trigger flow.'), {
-      statusCode,
-      code: err.code || 'FLOW_TRIGGER_FAILED',
-    });
-  }
-}
-
 module.exports = {
   startAuth,
   pollAuth,
@@ -660,5 +649,4 @@ module.exports = {
   getLogDownloadFile,
   deleteLogFile,
   deleteAllLogs,
-  triggerFlow,
 };

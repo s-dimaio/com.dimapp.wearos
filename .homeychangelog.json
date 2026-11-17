@@ -10,5 +10,9 @@
   "1.0.2": {
     "en": "(i) Added support for triggering Standard and Advanced Flows from Wear OS devices; \n(ii) Added an interactive User Guide and setup instructions in the app settings.",
     "it": "(i) Aggiunto il supporto all'avvio di Flow Standard e Avanzati dai dispositivi Wear OS; \n(ii) Aggiunta la Guida Utente interattiva e le istruzioni di configurazione nelle impostazioni dell'app."
+  },
+  "1.1.0": {
+    "en": "(i) Flows can now be triggered from the watch without needing HomeyScript installed on Homey; \n(ii) Devices removed from Homey are now automatically cleared from the widget list; \n(iii) Updated the User Guide with clearer setup steps and a direct Google Play Store link; \n(iv) Enhanced security, general improvements, and bug fixes.",
+    "it": "(i) I Flow possono ora essere avviati dall'orologio senza dover più installare HomeyScript su Homey; \n(ii) I dispositivi eliminati da Homey vengono ora rimossi automaticamente dall'elenco del widget; \n(iii) Aggiornata la Guida Utente con istruzioni più chiare e collegamento diretto al Google Play Store; \n(iv) Miglioramenti alla sicurezza, ottimizzazioni generali e correzione di bug."
   }
 }

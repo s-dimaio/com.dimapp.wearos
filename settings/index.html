@@ -509,8 +509,25 @@
     /* Google Play Store Badge Button */
     .play-store-container {
       display: flex;
-      justify-content: center;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
       margin-top: 14px;
+    }
+
+    .beta-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.6px;
+      padding: 4px 12px;
+      border-radius: 12px;
+      background-color: rgba(66, 133, 244, 0.12);
+      color: var(--brand-color);
+      border: 1px solid rgba(66, 133, 244, 0.25);
+      text-transform: uppercase;
     }
 
     .play-store-btn {
@@ -786,13 +803,14 @@
           </div>
           <div class="guide-card-body">
             <p data-i18n="settings.guide.companion_desc">
-              This Homey application acts as a companion for the standalone HomeyWatch app installed on your Wear OS smartwatch. It securely connects your smart home to your watch, synchronizes your 2x2 widget preferences, and enables fast control of devices and automations directly from your wrist.
+              This Homey application acts as a companion for the standalone Homey app installed on your Wear OS smartwatch. It securely connects your smart home to your watch, synchronizes your 2x2 widget preferences, and enables fast control of devices and automations directly from your wrist.
             </p>
             <p data-i18n="settings.guide.store_desc">
-              You can download the primary watch app for Wear OS directly from the built-in Google Play Store on your smartwatch:
+              The Wear OS app is currently available in Beta (internal testing). You can join the testing track and install the app directly from Google Play:
             </p>
             <div class="play-store-container">
-              <a href="https://play.google.com/store/apps/details?id=com.dimapp.android.homeywatch" target="_blank" rel="noopener noreferrer" class="play-store-btn">
+              <span class="beta-badge" data-i18n="settings.guide.store_badge_beta">BETA (INTERNAL TEST)</span>
+              <a id="playStoreBtn" href="https://play.google.com/apps/internaltest/4699126093164524500" target="_blank" rel="noopener noreferrer" class="play-store-btn" role="button" onclick="if (typeof Homey !== 'undefined' && Homey.openURL) { Homey.openURL('https://play.google.com/apps/internaltest/4699126093164524500'); return false; }">
                 <svg class="play-store-icon" viewBox="19 16 25 28" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <defs>
                     <linearGradient id="gp_blue" x1="20" y1="18" x2="33" y2="30" gradientUnits="userSpaceOnUse">
@@ -843,29 +861,29 @@
             <div class="guide-step">
               <span class="step-num">1</span>
               <div class="step-content">
-                <span class="step-title" data-i18n="settings.guide.login_step1_title">Launch HomeyWatch on your smartwatch</span>
-                <span class="step-desc" data-i18n="settings.guide.login_step1_desc">When launching the watch app, a pairing request will be initiated.</span>
+                <span class="step-title" data-i18n="settings.guide.login_step1_title">Launch Homey on your smartwatch (same Wi-Fi)</span>
+                <span class="step-desc" data-i18n="settings.guide.login_step1_desc">Ensure your smartwatch is connected to the same Wi-Fi network as Homey. When launching the app, your Homey Pro will be discovered automatically and its Homey ID will be detected. If automatic discovery is not available, you can enter the Homey ID manually.</span>
               </div>
             </div>
             <div class="guide-step">
               <span class="step-num">2</span>
               <div class="step-content">
-                <span class="step-title" data-i18n="settings.guide.login_step2_title">Scan the QR code with your smartphone</span>
-                <span class="step-desc" data-i18n="settings.guide.login_step2_desc">A unique QR code will appear on your watch display: scan it with your phone camera to open the authorization page.</span>
+                <span class="step-title" data-i18n="settings.guide.login_step2_title">Confirm hub connection</span>
+                <span class="step-desc" data-i18n="settings.guide.login_step2_desc">Select the discovered hub or confirm the manually entered ID, then tap Connect to initiate pairing.</span>
               </div>
             </div>
             <div class="guide-step">
               <span class="step-num">3</span>
               <div class="step-content">
-                <span class="step-title" data-i18n="settings.guide.login_step3_title">Complete login on your smartphone</span>
-                <span class="step-desc" data-i18n="settings.guide.login_step3_desc">Sign in with your Athom account and authorize the requested access permissions.</span>
+                <span class="step-title" data-i18n="settings.guide.login_step3_title">Complete authorization on smartphone</span>
+                <span class="step-desc" data-i18n="settings.guide.login_step3_desc">The authentication process automatically transfers to your smartphone. Sign in with your Athom account and approve access (a backup QR code is also available on the watch if needed).</span>
               </div>
             </div>
             <div class="guide-step">
               <span class="step-num">4</span>
               <div class="step-content">
-                <span class="step-title" data-i18n="settings.guide.login_step4_title">Automatic sync on Wear OS</span>
-                <span class="step-desc" data-i18n="settings.guide.login_step4_desc">Once finished on your smartphone, the watch app will finalize pairing within seconds and automatically load your devices, widgets, and favorites.</span>
+                <span class="step-title" data-i18n="settings.guide.login_step4_title">Automatic loading of home devices</span>
+                <span class="step-desc" data-i18n="settings.guide.login_step4_desc">Once finished on your phone, the smartwatch finalizes pairing within seconds and automatically loads all your smart home devices, favorites, and widgets.</span>
               </div>
             </div>
           </div>
@@ -885,23 +903,13 @@
           </div>
           <div class="guide-card-body">
             <!-- Alert 1: Platform Compatibility -->
-            <div class="notice-box info" style="margin-top: 0; margin-bottom: 12px; display: flex; align-items: flex-start; gap: 12px;">
+            <div class="notice-box info" style="margin-top: 0; margin-bottom: 0; display: flex; align-items: flex-start; gap: 12px;">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#007aff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top: 2px;">
                 <circle cx="12" cy="12" r="10"></circle>
                 <line x1="12" y1="16" x2="12" y2="12"></line>
                 <line x1="12" y1="8" x2="12.01" y2="8"></line>
               </svg>
               <span data-i18n="settings.guide.platform_alert">This application is natively designed for smartwatches running Wear OS 3+ (Google Pixel Watch, Samsung Galaxy Watch, etc.) and operates independently on the wrist.</span>
-            </div>
-
-            <!-- Alert 2: HomeyScript Prerequisite for Flows -->
-            <div class="notice-box warning" style="margin-bottom: 0; display: flex; align-items: flex-start; gap: 12px;">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ff9500" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top: 2px;">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="12" y1="8" x2="12" y2="12"></line>
-                <line x1="12" y1="16" x2="12.01" y2="16"></line>
-              </svg>
-              <span data-i18n="settings.guide.flows_desc">To trigger and run your Advanced Flows and Standard Flows from your smartwatch, the official HomeyScript app must be installed and active on your Homey Pro.</span>
             </div>
           </div>
         </div>
@@ -992,59 +1000,93 @@
       }
 
       /**
-       * Loads base devices and zones from Homey API.
+       * Loads base devices and zones concurrently from Homey API.
        *
        * @private
-       * @param {Function} callback
+       * @param {Function} callback - Invoked once both zones and devices are loaded.
+       * @param {boolean} [forceRefresh=false] - Whether to bypass in-memory cache.
        */
-      function _fetchBaseData(callback) {
-        if (allDevices.length > 0 && Object.keys(allZones).length > 0) {
+      function _fetchBaseData(callback, forceRefresh = false) {
+        if (!forceRefresh && allDevices.length > 0 && Object.keys(allZones).length > 0) {
           return callback();
+        }
+
+        let completed = 0;
+        let hasError = false;
+
+        function _onPartComplete() {
+          if (hasError) return;
+          completed += 1;
+          if (completed === 2) {
+            callback();
+          }
         }
 
         Homey.api('GET', '/zones', null, (err, zones) => {
           if (err) {
-            console.error('[Settings] Failed to load zones:', err);
-            _showToast(Homey.__('settings.common.error_generic'), 'error');
+            if (!hasError) {
+              hasError = true;
+              console.error('[Settings] Failed to load zones:', err);
+              _showToast(Homey.__('settings.common.error_generic'), 'error');
+            }
             return;
           }
           allZones = zones || {};
+          _onPartComplete();
+        });
 
-          Homey.api('GET', '/devices', null, (dErr, devices) => {
-            if (dErr) {
+        Homey.api('GET', '/devices', null, (dErr, devices) => {
+          if (dErr) {
+            if (!hasError) {
+              hasError = true;
               console.error('[Settings] Failed to load devices:', dErr);
               _showToast(Homey.__('settings.common.error_generic'), 'error');
-              return;
             }
-
-            allDevices = Object.values(devices || {});
-            callback();
-          });
+            return;
+          }
+          allDevices = Object.values(devices || {});
+          _onPartComplete();
         });
       }
 
       // ── Watch Devices Selection Logic ──────────────────────────────────────────
 
       /**
-       * Loads configuration data for Watch devices.
+       * Loads configuration data for Watch devices concurrently after base data fetch.
+       * Note: `GET /devices` already prunes deleted devices server-side.
        *
        * @private
        */
       function _loadWatchConfigData() {
         deviceList.innerHTML = '<p style="text-align:center; padding:20px; color:#999">' + Homey.__('settings.home_config.loading') + '</p>';
         _fetchBaseData(() => {
+          let pending = 3;
+
+          function _onSettingLoaded() {
+            pending -= 1;
+            if (pending === 0) {
+              const validDeviceIds = new Set(allDevices.map(d => d.id));
+              selectedWatchDeviceIds = selectedWatchDeviceIds.filter(id => validDeviceIds.has(id));
+              _renderWatchDeviceList(deviceSearchInput.value);
+              _updateWatchCounter();
+            }
+          }
+
           Homey.get('wearos_devices_ids', (err, val) => {
             selectedWatchDeviceIds = Array.isArray(val) ? val : [];
-            Homey.get('wearos_device_capabilities', (cErr, cVal) => {
-              selectedWatchDeviceCapabilities = (cVal && typeof cVal === 'object' && !Array.isArray(cVal)) ? cVal : {};
-              Homey.get('wearos_device_names', (nErr, nVal) => {
-                selectedWatchDeviceNames = (nVal && typeof nVal === 'object' && !Array.isArray(nVal)) ? nVal : {};
-                _renderWatchDeviceList(deviceSearchInput.value);
-                _updateWatchCounter();
-              });
-            });
+            _onSettingLoaded();
           });
-        });
+
+          Homey.get('wearos_device_capabilities', (cErr, cVal) => {
+            selectedWatchDeviceCapabilities = (cVal && typeof cVal === 'object' && !Array.isArray(cVal)) ? cVal : {};
+            _onSettingLoaded();
+          });
+
+          Homey.get('wearos_device_names', (nErr, nVal) => {
+            selectedWatchDeviceNames = (nVal && typeof nVal === 'object' && !Array.isArray(nVal)) ? nVal : {};
+            _onSettingLoaded();
+          });
+        }, true);
       }
 
       /**
@@ -1406,7 +1448,10 @@
       saveBtn.addEventListener('click', () => {
         saveBtn.disabled = true;
 
-        // Prune capabilities and custom names for unselected devices
+        // Prune any deleted devices and unselected device data
+        const validDeviceIds = new Set(allDevices.map(d => d.id));
+        selectedWatchDeviceIds = selectedWatchDeviceIds.filter(id => validDeviceIds.has(id));
+
         const cleanedCapabilities = {};
         const cleanedNames = {};
         for (const id of selectedWatchDeviceIds) {
@@ -1460,6 +1505,30 @@
       document.getElementById('nav_guide').addEventListener('click', () => {
         _showView(viewGuide);
       });
+
+      // Play Store link handler (uses Homey.openURL to escape sandboxed webview)
+      const PLAY_STORE_URL = 'https://play.google.com/apps/internaltest/4699126093164524500';
+
+      function _openPlayStore(e) {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        try {
+          if (typeof Homey !== 'undefined' && typeof Homey.openURL === 'function') {
+            Homey.openURL(PLAY_STORE_URL);
+            return;
+          }
+        } catch (err) {
+          console.error('[Settings] Homey.openURL error:', err);
+        }
+        window.open(PLAY_STORE_URL, '_blank');
+      }
+
+      const playStoreBtn = document.getElementById('playStoreBtn');
+      if (playStoreBtn) {
+        playStoreBtn.addEventListener('click', _openPlayStore);
+      }
 
       if (debugCard) {
         debugCard.onclick = (e) => {

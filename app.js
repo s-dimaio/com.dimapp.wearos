@@ -1,6 +1,7 @@
 'use strict';
 
 const Homey = require('homey');
+const crypto = require('crypto');
 const LogManager = require('./lib/LogManager');
 
 /** @constant {string} TAG - Log tag used in all messages emitted by this class. */
@@ -51,7 +52,7 @@ const RATE_LIMIT_AUTH_REFRESH_WINDOW_MS = 5 * 60 * 1000;
 /**
  * Main application class for the Homey Wear OS by Google app.
  *
- * This app acts as an OAuth2 relay and dashboard provider between the HomeyWatch
+ * This app acts as an OAuth2 relay and dashboard provider between the Homey
  * Wear OS smartwatch application and the Athom Cloud. It exposes public HTTP API endpoints
  * that the smartwatch uses to bootstrap the OAuth2 Authorization Code flow:
  *
@@ -98,12 +99,20 @@ class HomeyWearOsCompanionApp extends Homey.App {
   _isLoggingInternal = false;
 
   /**
-   * Cached identifier of the dedicated HomeyScript proxy script.
+   * Set of SHA-256 hashes of authorized session tokens.
    *
    * @private
-   * @type {string|null}
+   * @type {Set<string>}
    */
-  _homeyScriptProxyId = null;
+  _authorizedTokenHashes = new Set();
+
+  /**
+   * Bound listener reference for `this.homey.settings.on('set', ...)`, kept for cleanup in `onUninit`.
+   *
+   * @private
+   * @type {Function|null}
+   */
+  _onSettingsSetListener = null;
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -123,7 +132,16 @@ class HomeyWearOsCompanionApp extends Homey.App {
     this.log(`[${TAG}:onInit] Debug logging is ${isDebug ? 'ENABLED' : 'DISABLED'}.`);
     this.log(`[${TAG}:onInit] Security hardening active: max_pending_sessions=${MAX_PENDING_SESSIONS}, rate_limit_start=${RATE_LIMIT_AUTH_START_MAX}/5m, rate_limit_refresh=${RATE_LIMIT_AUTH_REFRESH_MAX}/5m, rbac_verification=ENABLED.`);
 
-    this.homey.settings.on('set', async (key) => {
+    const savedHashes = this.homey.settings.get('authorized_token_hashes') || [];
+    this._authorizedTokenHashes = new Set(Array.isArray(savedHashes) ? savedHashes : []);
+    this.log(`[${TAG}:onInit] Loaded ${this._authorizedTokenHashes.size} authorized token hash(es).`);
+
+    // Prune any deleted devices from Wear OS quick actions settings on startup
+    await this.pruneDeletedDevices().catch((err) => {
+      this.error(`[${TAG}:onInit] Failed to prune deleted devices on startup:`, err.message);
+    });
+
+    this._onSettingsSetListener = async (key) => {
       if (key === 'debug_logging_enabled') {
         const state = this.isDebugLoggingEnabled();
         if (this._logManager) {
@@ -131,7 +149,35 @@ class HomeyWearOsCompanionApp extends Homey.App {
         }
         this.log(`[${TAG}:onInit] Debug logging state changed: ${state ? 'ENABLED' : 'DISABLED'}`);
       }
-    });
+    };
+    this.homey.settings.on('set', this._onSettingsSetListener);
+  }
+
+  /**
+   * Called by Homey when the application is stopped or restarted.
+   * Cleans up all active authentication session timers, OAuth2 callback listeners,
+   * rate limit records, and settings event listeners to prevent resource leaks.
+   *
+   * @public
+   * @returns {Promise<void>}
+   * @example
+   * await app.onUninit();
+   */
+  async onUninit() {
+    this.log(`[${TAG}:onUninit] Cleaning up application resources...`);
+
+    for (const sessionId of Array.from(this._sessions.keys())) {
+      this._destroySession(sessionId);
+    }
+    this._sessions.clear();
+    this._rateLimits.clear();
+
+    if (this._onSettingsSetListener && this.homey?.settings && typeof this.homey.settings.removeListener === 'function') {
+      this.homey.settings.removeListener('set', this._onSettingsSetListener);
+      this._onSettingsSetListener = null;
+    }
+
+    this.log(`[${TAG}:onUninit] Application cleanup complete.`);
   }
 
   // ── Public Methods (called from api.js) ────────────────────────────────────
@@ -171,21 +217,16 @@ class HomeyWearOsCompanionApp extends Homey.App {
     this.log(`[${TAG}:startAuthSession] Creating OAuth2 callback for session ${sessionId.substring(0, 8)}... (active pool: ${this._sessions.size}/${MAX_PENDING_SESSIONS})`);
 
     const clientId = Homey.env.CLIENT_ID;
-    const scopes = [
-      'homey.zone.readonly',
-      'homey.device.readonly',
-      'homey.device.control',
-      'homey.flow.readonly',
-      'homey.flow.start',
-      'homey.app.readonly',
-      'homey.user.self',
-    ].join(' ');
 
+    // The base authorization URL
+    // createOAuth2Callback requires explicitly appending the redirect_uri configured in the Dev Portal.
+    // By omitting the scope parameter entirely, Athom Cloud automatically grants all client scopes configured
+    // in the Developer Portal, critically including 'account.homeys.readonly' which prompts the user to select
+    // the target Homey and binds 'resource.homey.<id>' to the issued tokens.
     const baseAuthUrl = `https://api.athom.com/oauth2/authorise`
       + `?response_type=code`
       + `&client_id=${encodeURIComponent(clientId)}`
-      + `&redirect_uri=https://callback.athom.com/oauth2/callback/`
-      + `&scope=${encodeURIComponent(scopes)}`;
+      + `&redirect_uri=https://callback.athom.com/oauth2/callback/`;
 
     return new Promise((resolve, reject) => {
       this.homey.cloud.createOAuth2Callback(baseAuthUrl)
@@ -248,6 +289,118 @@ class HomeyWearOsCompanionApp extends Homey.App {
   }
 
   /**
+   * Validates whether a given session token is authorized to access protected companion endpoints.
+   *
+   * Validation sequence:
+   * 1. Checks if the token matches the Homey Pro local Owner API token.
+   * 2. Checks if the SHA-256 hash exists in the in-memory authorized token hash set.
+   * 3. Fallback for pre-existing client sessions: Validates the token directly against the local
+   *    Homey Pro gateway (`GET /api/manager/devices/device`). If authorized (HTTP 200), caches the
+   *    hash for subsequent O(1) lookups.
+   *
+   * @public
+   * @async
+   * @param {string} token - The raw session token to validate (mandatory).
+   * @returns {Promise<boolean>} True if the token is valid and authorized, false otherwise.
+   * @example
+   * const isAuthorized = await homey.app.isValidSessionToken(bearerToken);
+   */
+  async isValidSessionToken(token) {
+    if (!token || typeof token !== 'string' || token.trim().length === 0) {
+      return false;
+    }
+
+    const cleanToken = token.trim();
+
+    // 1. Check Owner API Token
+    try {
+      const ownerToken = await this.homey.api.getOwnerApiToken();
+      if (ownerToken && cleanToken === ownerToken) {
+        return true;
+      }
+    } catch (err) {
+      // Ignore owner token retrieval failure
+    }
+
+    // 2. Check cached SHA-256 hashes
+    const hash = crypto.createHash('sha256').update(cleanToken).digest('hex');
+    if (this._authorizedTokenHashes && this._authorizedTokenHashes.has(hash)) {
+      return true;
+    }
+
+    // 3. Fallback verification against local Homey gateway for pre-existing sessions
+    try {
+      const localUrl = await this.homey.api.getLocalUrl();
+      const verifyRes = await fetch(`${localUrl}/api/manager/devices/device`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${cleanToken}` },
+      });
+
+      if (verifyRes.ok) {
+        this.log(`[${TAG}:isValidSessionToken] Token validated successfully against local gateway. Caching hash...`);
+        this._saveAuthorizedToken(cleanToken);
+        return true;
+      }
+    } catch (fetchErr) {
+      this.error(`[${TAG}:isValidSessionToken] Gateway token verification error:`, fetchErr.message || fetchErr);
+    }
+
+    return false;
+  }
+
+  /**
+   * Enforces session token authorization for protected HTTP API endpoints.
+   *
+   * Extracts the token from HTTP headers ('Authorization: Bearer <token>'), query parameters
+   * ('?token=<token>'), or JSON request body ('{ "token": "<token>" }').
+   * Rejects unauthenticated callers with an HTTP 401 Unauthorized error.
+   *
+   * @public
+   * @async
+   * @param {object} [args] - Request arguments provided by Homey Web API.
+   * @param {object} [args.headers] - Request HTTP headers.
+   * @param {object} [args.query] - Request query parameters.
+   * @param {object} [args.body] - Request body parameters.
+   * @returns {Promise<void>} Resolves if authorized; throws an HTTP 401 Error otherwise.
+   * @throws {Error} If token is missing, invalid, or unauthorized (HTTP 401).
+   * @example
+   * await homey.app.requireValidSessionToken(args);
+   */
+  async requireValidSessionToken({ headers, query, body } = {}) {
+    let token = null;
+
+    // 1. Extract from Authorization header
+    const authHeader = headers?.authorization || headers?.Authorization;
+    if (typeof authHeader === 'string' && authHeader.trim().length > 0) {
+      const match = authHeader.match(/^Bearer\s+(.+)$/i);
+      token = match ? match[1].trim() : authHeader.trim();
+    }
+
+    // 2. Extract from query parameters
+    if (!token && query && typeof query.token === 'string' && query.token.trim().length > 0) {
+      token = query.token.trim();
+    }
+
+    // 3. Extract from body parameters
+    if (!token && body && typeof body.token === 'string' && body.token.trim().length > 0) {
+      token = body.token.trim();
+    }
+
+    if (!token) {
+      const queryKeys = query ? Object.keys(query).join(', ') : 'none';
+      const bodyKeys = body ? Object.keys(body).join(', ') : 'none';
+      this.error(`[${TAG}:requireValidSessionToken] Security rejection: Missing authorization token (queryKeys=[${queryKeys}], bodyKeys=[${bodyKeys}]).`);
+      throw Object.assign(new Error('Unauthorized: Missing authorization token.'), { statusCode: 401 });
+    }
+
+    const isValid = await this.isValidSessionToken(token);
+    if (!isValid) {
+      this.error(`[${TAG}:requireValidSessionToken] Security rejection: Invalid or unauthorized token.`);
+      throw Object.assign(new Error('Unauthorized: Invalid or expired session token.'), { statusCode: 401 });
+    }
+  }
+
+  /**
    * Refreshes the OAuth access token using the Athom Cloud OAuth2 refresh_token.
    *
    * Enforces sliding window rate limiting (max 10 requests per 5 minutes).
@@ -301,15 +454,113 @@ class HomeyWearOsCompanionApp extends Homey.App {
       await this._verifyHubMembership(newAthomTokens.access_token);
       this.log(`[${TAG}:refreshAuthSession] Hub membership check passed for token refresh.`);
 
-      const sessionToken = await this.homey.api.getOwnerApiToken();
+      const homeyId = await this.homey.cloud.getHomeyId();
+      this.log(`[${TAG}:refreshAuthSession] Establishing renewed bound user session token...`);
+
+      let userSessionToken;
+      try {
+        userSessionToken = await this._createHomeyUserSession(newAthomTokens.access_token, homeyId);
+        this.log(`[${TAG}:refreshAuthSession] Renewed bound user session token created successfully.`);
+      } catch (delegationErr) {
+        this.error(`[${TAG}:refreshAuthSession] Bound delegation failed during token refresh (${delegationErr.message}). Re-authentication required.`);
+        const err = new Error('Companion app security has been updated. Please re-authenticate.');
+        err.statusCode = 401;
+        err.code = 'REAUTH_REQUIRED';
+        err.reason = 'COMPANION_UPDATED';
+        throw err;
+      }
+
       return {
-        session_token: sessionToken,
+        session_token: userSessionToken,
         athom_refresh_token: newAthomTokens.refresh_token,
       };
     } catch (err) {
       if (err.statusCode && err.statusCode < 500) throw err;
       this.error(`[${TAG}:refreshAuthSession] Failed to refresh auth session:`, err.message || err);
       throw Object.assign(new Error('Internal error during token refresh.'), { statusCode: 500 });
+    }
+  }
+
+  /**
+   * Prunes devices that no longer exist on Homey Pro from Wear OS settings.
+   *
+   * Cleans up deleted device IDs from `wearos_devices_ids`, as well as orphaned entries
+   * from `wearos_device_capabilities` and `wearos_device_names`.
+   *
+   * @public
+   * @async
+   * @param {object|null} [existingDevicesMap=null] - Optional pre-fetched map of devices from Homey API (optional).
+   * @returns {Promise<string[]>} Resolves with the sanitized array of valid device IDs.
+   * @example
+   * const validIds = await this.pruneDeletedDevices();
+   */
+  async pruneDeletedDevices(existingDevicesMap = null) {
+    try {
+      const savedIds = this.homey.settings.get('wearos_devices_ids') || [];
+      const savedCapabilities = this.homey.settings.get('wearos_device_capabilities') || {};
+      const savedNames = this.homey.settings.get('wearos_device_names') || {};
+
+      const hasIds = Array.isArray(savedIds) && savedIds.length > 0;
+      const hasCaps = savedCapabilities && typeof savedCapabilities === 'object' && !Array.isArray(savedCapabilities) && Object.keys(savedCapabilities).length > 0;
+      const hasNames = savedNames && typeof savedNames === 'object' && !Array.isArray(savedNames) && Object.keys(savedNames).length > 0;
+
+      // Skip fetching the full device registry when no quick-action settings are stored yet
+      if (!hasIds && !hasCaps && !hasNames) {
+        return [];
+      }
+
+      let devices = existingDevicesMap;
+      if (!devices || typeof devices !== 'object') {
+        const localUrl = await this.homey.api.getLocalUrl();
+        const token = await this.homey.api.getOwnerApiToken();
+        const response = await fetch(`${localUrl}/api/manager/devices/device`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) {
+          this.error(`[${TAG}:pruneDeletedDevices] Failed to fetch devices from local API: HTTP ${response.status}`);
+          return Array.isArray(savedIds) ? savedIds : [];
+        }
+        devices = await response.json();
+      }
+
+      const validDeviceIds = new Set(Object.keys(devices || {}));
+
+      const validIds = (Array.isArray(savedIds) ? savedIds : []).filter(id => validDeviceIds.has(id));
+      let modified = validIds.length !== (Array.isArray(savedIds) ? savedIds.length : 0);
+
+      const cleanedCapabilities = {};
+      if (savedCapabilities && typeof savedCapabilities === 'object' && !Array.isArray(savedCapabilities)) {
+        for (const [id, cap] of Object.entries(savedCapabilities)) {
+          if (validDeviceIds.has(id)) {
+            cleanedCapabilities[id] = cap;
+          } else {
+            modified = true;
+          }
+        }
+      }
+
+      const cleanedNames = {};
+      if (savedNames && typeof savedNames === 'object' && !Array.isArray(savedNames)) {
+        for (const [id, name] of Object.entries(savedNames)) {
+          if (validDeviceIds.has(id)) {
+            cleanedNames[id] = name;
+          } else {
+            modified = true;
+          }
+        }
+      }
+
+      if (modified) {
+        this.log(`[${TAG}:pruneDeletedDevices] Pruned deleted devices from Wear OS settings: before=${Array.isArray(savedIds) ? savedIds.length : 0}, after=${validIds.length}`);
+        this.homey.settings.set('wearos_devices_ids', validIds);
+        this.homey.settings.set('wearos_device_capabilities', cleanedCapabilities);
+        this.homey.settings.set('wearos_device_names', cleanedNames);
+      }
+
+      return validIds;
+    } catch (err) {
+      this.error(`[${TAG}:pruneDeletedDevices] Error during device pruning:`, err.message);
+      return this.homey.settings.get('wearos_devices_ids') || [];
     }
   }
 
@@ -492,48 +743,29 @@ class HomeyWearOsCompanionApp extends Homey.App {
       const userResponse = await this._verifyHubMembership(token.access_token);
       this.log(`[${TAG}:_exchangeCode] Hub membership check passed for session ${sessionId.substring(0, 8)}...`);
 
-      let sessionToken = null;
-      let homeyId = null;
-      let homeyApiUrl = null;
-      let localHomeyName = 'Homey';
+      const homeyId = await this.homey.cloud.getHomeyId();
+      const homeyApiUrl = `https://${homeyId}.connect.athom.com/api/`;
 
-      try {
-        sessionToken = await this.homey.api.getOwnerApiToken();
-        homeyId = await this.homey.cloud.getHomeyId();
-        homeyApiUrl = `https://${homeyId}.connect.athom.com/api/`;
-
-        try {
-          const nameRes = await fetch(`${homeyApiUrl}manager/system/name`, {
-            headers: { Authorization: `Bearer ${sessionToken}` }
-          });
-          if (nameRes.ok) {
-            const nameData = await nameRes.json();
-            if (typeof nameData === 'string' && nameData.trim()) {
-              localHomeyName = nameData.trim();
-            } else if (nameData && typeof nameData.name === 'string') {
-              localHomeyName = nameData.name.trim();
-            }
-          }
-        } catch (nameErr) {
-          this.error(`[${TAG}:_exchangeCode] Failed to fetch system name:`, nameErr.message);
-        }
-      } catch (hubErr) {
-        this.error(`[${TAG}:_exchangeCode] Failed to obtain owner API token:`, hubErr.message);
-      }
+      // 2. Establish scoped User Session Token and resolve local hub name in parallel
+      this.log(`[${TAG}:_exchangeCode] Establishing bound user session token and resolving hub name for session ${sessionId.substring(0, 8)}...`);
+      const [userSessionToken, localHomeyName] = await Promise.all([
+        this._createHomeyUserSession(token.access_token, homeyId),
+        this._fetchLocalHubName(),
+      ]);
+      this.log(`[${TAG}:_exchangeCode] Bound user session token and hub info obtained for session ${sessionId.substring(0, 8)}... (Hub Name: ${localHomeyName})`);
 
       session.status = 'complete';
       session.token = {
-        session_token: sessionToken,
+        session_token: userSessionToken,
         homey_id: homeyId,
         homey_name: localHomeyName,
         homey_api_url: homeyApiUrl,
         athom_refresh_token: token.refresh_token,
-        location: null,
         user: userResponse ? {
-          id: userResponse.id || userResponse._id || userResponse.athomId || 'unknown',
-          name: userResponse.name || 'Homey User',
-          email: userResponse.email || null,
-          role: userResponse.localRole || null,
+          id: userResponse.id || userResponse._id || userResponse.athomId || (userResponse.user && (userResponse.user.id || userResponse.user._id || userResponse.user.athomId)) || 'unknown',
+          name: userResponse.name || userResponse.fullname || (userResponse.user && (userResponse.user.name || userResponse.user.fullname)) || `${userResponse.firstname || (userResponse.user && userResponse.user.firstname) || ''} ${userResponse.lastname || (userResponse.user && userResponse.user.lastname) || ''}`.trim() || 'Homey User',
+          email: userResponse.email || (userResponse.user && userResponse.user.email) || null,
+          role: userResponse.localRole || 'user',
         } : null,
       };
 
@@ -642,9 +874,7 @@ class HomeyWearOsCompanionApp extends Homey.App {
 
     const userProfile = await response.json();
     const currentHomeyId = await this.homey.cloud.getHomeyId();
-
-    const maskId = id => (typeof id === 'string' && id.length > 8 ? `${id.substring(0, 4)}***${id.slice(-4)}` : '***');
-    const maskedHomeyId = maskId(currentHomeyId);
+    const maskedHomeyId = this._maskId(currentHomeyId);
 
     const userId = userProfile.id
       || userProfile._id
@@ -657,7 +887,7 @@ class HomeyWearOsCompanionApp extends Homey.App {
       throw Object.assign(new Error('Invalid Athom user profile.'), { statusCode: 401 });
     }
 
-    const maskedUserId = maskId(userId);
+    const maskedUserId = this._maskId(userId);
 
     // Query Local Homey Pro User Registry
     let usersList = [];
@@ -716,165 +946,205 @@ class HomeyWearOsCompanionApp extends Homey.App {
   }
 
   /**
-   * Ensures the existence of the HomeyScript execution proxy script.
+   * Exchanges an Athom Cloud OAuth2 access token for a bound delegation token
+   * and logs in to the local Homey Pro gateway to obtain a scoped user session token.
    *
-   * Verifies if HomeyScript (`com.athom.homeyscript`) is installed on the Homey hub.
-   * If the dedicated `WearOS-FlowTrigger` script is missing, creates it automatically.
-   *
-   * @private
-   * @returns {Promise<{scriptId: string}>} The script identifier to execute.
-   * @throws {Error} If HomeyScript is not installed or script proxy creation fails.
-   */
-  async _ensureHomeyScriptProxy() {
-    if (this._homeyScriptProxyId) {
-      return { scriptId: this._homeyScriptProxyId };
-    }
-
-    const localUrl = await this.homey.api.getLocalUrl();
-    const ownerToken = await this.homey.api.getOwnerApiToken();
-
-    try {
-      const response = await fetch(`${localUrl}/api/app/com.athom.homeyscript/script`, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${ownerToken}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          const err = new Error('HomeyScript app is not installed on Homey Pro.');
-          err.code = 'HOMEYSCRIPT_NOT_INSTALLED';
-          err.statusCode = 404;
-          throw err;
-        }
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const scripts = await response.json();
-      const existing = Object.values(scripts).find(s => s && s.name === 'WearOS-FlowTrigger');
-      if (existing) {
-        this._homeyScriptProxyId = existing.id;
-        this.log(`[${TAG}:_ensureHomeyScriptProxy] Found existing HomeyScript proxy script: ${this._homeyScriptProxyId}`);
-        return { scriptId: this._homeyScriptProxyId };
-      }
-    } catch (err) {
-      if (err.code === 'HOMEYSCRIPT_NOT_INSTALLED') throw err;
-      this.log(`[${TAG}:_ensureHomeyScriptProxy] Could not list existing scripts, will attempt creation: ${err.message}`);
-    }
-
-    try {
-      const createResponse = await fetch(`${localUrl}/api/app/com.athom.homeyscript/script`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${ownerToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: 'WearOS-FlowTrigger',
-          code: '// Flow trigger proxy for Wear OS Companion App\n// Managed by com.dimapp.wearos\n',
-        }),
-      });
-
-      if (!createResponse.ok) {
-        if (createResponse.status === 404) {
-          const err = new Error('HomeyScript app is not installed on Homey Pro.');
-          err.code = 'HOMEYSCRIPT_NOT_INSTALLED';
-          err.statusCode = 404;
-          throw err;
-        }
-        throw new Error(`HTTP ${createResponse.status}: ${createResponse.statusText}`);
-      }
-
-      const newScript = await createResponse.json();
-      this._homeyScriptProxyId = newScript.id;
-      this.log(`[${TAG}:_ensureHomeyScriptProxy] Created HomeyScript proxy script: ${this._homeyScriptProxyId}`);
-      return { scriptId: this._homeyScriptProxyId };
-    } catch (err) {
-      if (err.code === 'HOMEYSCRIPT_NOT_INSTALLED') throw err;
-      throw new Error(`Failed to create HomeyScript proxy script: ${err.message}`);
-    }
-  }
-
-  /**
-   * Executes arbitrary JavaScript snippet inside the privileged HomeyScript runtime.
+   * Flow:
+   * 1. Requests a bound delegation token from Athom Cloud:
+   *    `POST https://api.athom.com/delegation/token?audience=homey&homeyId={homeyId}`
+   *    Payload: `{ resource: 'resource.homey.' + homeyId }`
+   * 2. Extracts the signed delegation JWT.
+   * 3. Authenticates with the Homey Pro User Manager gateway:
+   *    `POST {localUrl}/api/manager/users/login` (with connect.athom.com fallback)
+   *    Payload: `{ token: delegationJwt, resource: 'resource.homey.' + homeyId }`
+   * 4. Extracts and returns the established user session token.
    *
    * @private
-   * @param {string} code - The JavaScript snippet to run inside HomeyScript.
-   * @returns {Promise<any>} The return value from HomeyScript execution.
-   * @throws {Error} If HomeyScript is not installed or script execution fails.
+   * @async
+   * @param {string} accessToken - The Athom Cloud OAuth2 access token (mandatory).
+   * @param {string} homeyId - The unique 24-character hex ID of this Homey Pro hub (mandatory).
+   * @returns {Promise<string>} The scoped user session token.
+   * @throws {Error} If delegation token issuance or gateway login fails.
+   * @example
+   * const userSessionToken = await this._createHomeyUserSession(token.access_token, homeyId);
    */
-  async _executeHomeyScript(code) {
-    const { scriptId } = await this._ensureHomeyScriptProxy();
-    const localUrl = await this.homey.api.getLocalUrl();
-    const ownerToken = await this.homey.api.getOwnerApiToken();
+  async _createHomeyUserSession(accessToken, homeyId) {
+    if (!accessToken || typeof accessToken !== 'string') {
+      throw Object.assign(new Error('Missing or invalid accessToken.'), { statusCode: 400 });
+    }
+    if (!homeyId || typeof homeyId !== 'string') {
+      throw Object.assign(new Error('Missing or invalid homeyId.'), { statusCode: 400 });
+    }
 
-    const response = await fetch(`${localUrl}/api/app/com.athom.homeyscript/script/${scriptId}/run`, {
+    const maskedHomeyId = this._maskId(homeyId);
+
+    this.log(`[${TAG}:_createHomeyUserSession] Requesting bound delegation token for hub '${maskedHomeyId}' from Athom Cloud...`);
+
+    const delegationUrl = `https://api.athom.com/delegation/token?audience=homey&homeyId=${encodeURIComponent(homeyId)}`;
+    const delegationResponse = await fetch(delegationUrl, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${ownerToken}`,
+        Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ resource: `resource.homey.${homeyId}` }),
     });
 
-    if (!response.ok) {
-      if (response.status === 404) {
-        const err = new Error('HomeyScript app is not installed on Homey Pro.');
-        err.code = 'HOMEYSCRIPT_NOT_INSTALLED';
-        err.statusCode = 404;
-        throw err;
-      }
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    if (!delegationResponse.ok) {
+      const errorText = await delegationResponse.text().catch(() => '');
+      this.error(`[${TAG}:_createHomeyUserSession] Delegation token request failed with HTTP ${delegationResponse.status}:`, errorText);
+      throw Object.assign(new Error(`Delegation token request failed (HTTP ${delegationResponse.status})`), { statusCode: delegationResponse.status });
     }
 
-    const result = await response.json();
-    if (!result.success) {
-      const errorMsg = result.returns?.message || result.error || 'HomeyScript execution failed';
-      throw new Error(errorMsg);
+    const delegationData = await delegationResponse.json();
+    const delegationJwt = typeof delegationData === 'string'
+      ? delegationData
+      : (delegationData.token || delegationData.result || delegationData);
+
+    if (!delegationJwt || typeof delegationJwt !== 'string') {
+      this.error(`[${TAG}:_createHomeyUserSession] Unexpected delegation response format.`);
+      throw Object.assign(new Error('Invalid delegation token response from Athom Cloud.'), { statusCode: 502 });
     }
-    return result.returns;
+
+    this.log(`[${TAG}:_createHomeyUserSession] Bound delegation token received. Logging in to Homey Pro gateway...`);
+
+    const loginPayload = JSON.stringify({
+      token: delegationJwt,
+      resource: `resource.homey.${homeyId}`,
+    });
+
+    let loginResponse = null;
+
+    // 1. Attempt gateway login via internal loopback localUrl
+    try {
+      const localUrl = await this.homey.api.getLocalUrl();
+      loginResponse = await fetch(`${localUrl}/api/manager/users/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: loginPayload,
+      });
+    } catch (localErr) {
+      this.log(`[${TAG}:_createHomeyUserSession] Local loopback gateway login attempt failed (${localErr.message}), falling back to connect URL...`);
+    }
+
+    // 2. If loopback failed or returned error, fallback to cloud-routed connect.athom.com
+    if (!loginResponse || !loginResponse.ok) {
+      const fallbackUrl = `https://${homeyId}.connect.athom.com/api/manager/users/login`;
+      this.log(`[${TAG}:_createHomeyUserSession] Attempting gateway login via connect URL: ${fallbackUrl}`);
+      loginResponse = await fetch(fallbackUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: loginPayload,
+      });
+    }
+
+    if (!loginResponse.ok) {
+      const loginErrorText = await loginResponse.text().catch(() => '');
+      this.error(`[${TAG}:_createHomeyUserSession] Homey gateway login failed with HTTP ${loginResponse.status}:`, loginErrorText);
+      throw Object.assign(new Error(`Homey gateway login failed (HTTP ${loginResponse.status})`), { statusCode: loginResponse.status });
+    }
+
+    const loginData = await loginResponse.json();
+    const userSessionToken = typeof loginData === 'string'
+      ? loginData
+      : (loginData.token || loginData.session_token || loginData);
+
+    if (!userSessionToken || typeof userSessionToken !== 'string') {
+      this.error(`[${TAG}:_createHomeyUserSession] Unexpected login response format.`);
+      throw Object.assign(new Error('Invalid session token response from Homey gateway.'), { statusCode: 502 });
+    }
+
+    this.log(`[${TAG}:_createHomeyUserSession] Scoped user session token successfully established for hub '${maskedHomeyId}'.`);
+    this._saveAuthorizedToken(userSessionToken);
+    return userSessionToken;
   }
 
   /**
-   * Triggers a standard or advanced Homey flow via the privileged HomeyScript proxy.
+   * Persists the SHA-256 hash of an authorized session token in memory and settings.
    *
-   * Validates that flowId is a valid UUID format, enforces boolean isAdvanced parameter,
-   * serializes arguments safely via JSON.stringify, and avoids any string interpolation
-   * vulnerabilities inside HomeyScript code generation.
+   * Hashes the token using SHA-256 before storage to ensure tokens are never persisted in plaintext.
+   * Maintains a capped history (maximum 50 token hashes) to prevent unbounded storage growth.
    *
-   * @public
-   * @param {string} flowId - The UUID of the target Flow.
-   * @param {boolean} [isAdvanced=false] - Whether the target flow is an Advanced Flow.
-   * @param {object} [args={}] - Optional arguments to pass to the flow.
-   * @returns {Promise<{success: boolean, message: string}>} Result of the operation.
-   * @throws {Error} If the flow UUID is invalid or execution fails.
+   * @private
+   * @param {string} token - The raw session token to authorize (mandatory).
+   * @returns {void}
    * @example
-   * await homey.app.triggerFlow('123e4567-e89b-12d3-a456-426614174000', true);
+   * this._saveAuthorizedToken('a1b2c3d4...');
    */
-  async triggerFlow(flowId, isAdvanced = false, args = {}) {
-    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const trimmedId = typeof flowId === 'string' ? flowId.trim() : '';
-
-    if (!trimmedId || !UUID_REGEX.test(trimmedId)) {
-      this.error(`[${TAG}:triggerFlow] Security rejection: Invalid flowId '${trimmedId}'. Standard UUID format required.`);
-      throw Object.assign(new Error('Missing or invalid flowId parameter. Must be a valid UUID.'), { statusCode: 400 });
+  _saveAuthorizedToken(token) {
+    if (!token || typeof token !== 'string' || token.trim().length === 0) return;
+    const hash = crypto.createHash('sha256').update(token.trim()).digest('hex');
+    if (!this._authorizedTokenHashes) {
+      this._authorizedTokenHashes = new Set();
     }
+    this._authorizedTokenHashes.add(hash);
+    const hashArray = Array.from(this._authorizedTokenHashes).slice(-50);
+    this._authorizedTokenHashes = new Set(hashArray);
+    try {
+      this.homey.settings.set('authorized_token_hashes', hashArray);
+      this.log(`[${TAG}:_saveAuthorizedToken] Authorized token hash stored. Total cached hashes: ${this._authorizedTokenHashes.size}`);
+    } catch (err) {
+      this.error(`[${TAG}:_saveAuthorizedToken] Failed to save authorized token hash in settings:`, err.message || err);
+    }
+  }
 
-    const safeIsAdvanced = isAdvanced === true;
-    const method = safeIsAdvanced ? 'triggerAdvancedFlow' : 'triggerFlow';
+  /**
+   * Fetches the user-defined Homey hub name over the local loopback API with fallback to `'Homey'`.
+   *
+   * @private
+   * @async
+   * @returns {Promise<string>} The resolved hub display name.
+   * @example
+   * const hubName = await this._fetchLocalHubName();
+   */
+  async _fetchLocalHubName() {
+    try {
+      const [localUrl, ownerSessionToken] = await Promise.all([
+        this.homey.api.getLocalUrl(),
+        this.homey.api.getOwnerApiToken(),
+      ]);
+      const headers = { Authorization: `Bearer ${ownerSessionToken}` };
 
-    // Safely encode parameters using JSON.stringify to completely prevent script injection
-    const safeId = JSON.stringify(trimmedId);
-    const safeArgs = args && typeof args === 'object' && !Array.isArray(args) ? JSON.stringify(args) : 'null';
-    const code = `await Homey.flow.${method}({ id: ${safeId} }, ${safeArgs});`;
+      const nameRes = await fetch(`${localUrl}/api/manager/system/name`, { headers });
+      if (nameRes.ok) {
+        const nameData = await nameRes.json();
+        if (typeof nameData === 'string' && nameData.trim()) {
+          return nameData.trim();
+        }
+        if (nameData && typeof nameData.name === 'string' && nameData.name.trim()) {
+          return nameData.name.trim();
+        }
+        if (nameData && typeof nameData.value === 'string' && nameData.value.trim()) {
+          return nameData.value.trim();
+        }
+      }
 
-    this.log(`[${TAG}:triggerFlow] Validation passed for flow '${trimmedId}'. Executing method '${method}' via HomeyScript proxy...`);
-    await this._executeHomeyScript(code);
-    this.log(`[${TAG}:triggerFlow] Flow '${trimmedId}' triggered successfully.`);
+      const sysRes = await fetch(`${localUrl}/api/manager/system`, { headers });
+      if (sysRes.ok) {
+        const sysData = await sysRes.json();
+        if (sysData && typeof sysData.name === 'string' && sysData.name.trim()) {
+          return sysData.name.trim();
+        }
+      }
+    } catch (err) {
+      this.log(`[${TAG}:_fetchLocalHubName] Could not fetch local system name, using default: ${err.message}`);
+    }
+    return 'Homey';
+  }
 
-    return { success: true, message: 'Flow triggered successfully.' };
+  /**
+   * Masks an identifier so only its first and last 4 characters are shown in logs.
+   *
+   * @private
+   * @param {string} id - Identifier string to mask (mandatory).
+   * @returns {string} Masked identifier suitable for diagnostic logs.
+   * @example
+   * const safeId = this._maskId('5f9e8d7c6b5a432100001234');
+   */
+  _maskId(id) {
+    return (typeof id === 'string' && id.length > 8)
+      ? `${id.substring(0, 4)}***${id.slice(-4)}`
+      : '***';
   }
 
   /**
